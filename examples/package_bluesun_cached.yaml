@@ -1,0 +1,170 @@
+# Optional Home Assistant package — cached/stale BMS sensors.
+#
+# Drop this file into <config>/packages/ (after enabling
+# homeassistant.packages: !include_dir_named packages in configuration.yaml).
+# It creates _stale variants of the bank sensors that retain the last known
+# value when the source goes "unavailable" — useful for dashboards that
+# look ugly when entities go missing.
+#
+# Entity prefix used here: sensor.panel_cuartoelectrico_bluesun_*
+# Find-and-replace with YOUR panel's actual prefix before deploying.
+
+template:
+  # ─── Estado de conexión del BMS ─────────────────────────────────────────
+  - sensor:
+      - name: "BlueSun BMS Connection State"
+        unique_id: bluesun_bms_connection_state
+        icon: >-
+          {% if is_state('sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok', 'unavailable') %}
+            mdi:bluetooth-off
+          {% else %}
+            mdi:bluetooth-connect
+          {% endif %}
+        state: >-
+          {% if is_state('sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok', 'unavailable') %}
+            offline
+          {% else %}
+            online
+          {% endif %}
+
+      - name: "BlueSun BMS Last Seen Minutes"
+        unique_id: bluesun_bms_last_seen_min
+        unit_of_measurement: "min"
+        state_class: measurement
+        icon: mdi:clock-outline
+        state: >-
+          {% set ls = states.sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok %}
+          {% if ls and ls.last_changed %}
+            {{ ((now() - ls.last_changed).total_seconds() / 60) | round(1, default=0) }}
+          {% else %}
+            unknown
+          {% endif %}
+
+  # ─── Cached (stale-safe) de los agregados principales del banco ────────
+  # Cada uno congela el último valor válido cuando el source es unavailable.
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_soc_avg
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank SoC Avg (stale)"
+        unique_id: bluesun_bank_soc_avg_stale
+        state: "{{ trigger.to_state.state }}"
+        device_class: battery
+        state_class: measurement
+        unit_of_measurement: "%"
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_power
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Power (stale)"
+        unique_id: bluesun_bank_power_stale
+        state: "{{ trigger.to_state.state }}"
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: "W"
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_current_total
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Current Total (stale)"
+        unique_id: bluesun_bank_current_total_stale
+        state: "{{ trigger.to_state.state }}"
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: "A"
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_voltage_avg
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Voltage Avg (stale)"
+        unique_id: bluesun_bank_voltage_avg_stale
+        state: "{{ trigger.to_state.state }}"
+        device_class: voltage
+        state_class: measurement
+        unit_of_measurement: "V"
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_soc_spread
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank SoC Spread (stale)"
+        unique_id: bluesun_bank_soc_spread_stale
+        state: "{{ trigger.to_state.state }}"
+        state_class: measurement
+        unit_of_measurement: "%"
+        icon: mdi:arrow-expand-horizontal
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_max_cell_temp
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Max Cell Temp (stale)"
+        unique_id: bluesun_bank_max_cell_temp_stale
+        state: "{{ trigger.to_state.state }}"
+        device_class: temperature
+        state_class: measurement
+        unit_of_measurement: "°C"
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_min_soh
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Min SoH (stale)"
+        unique_id: bluesun_bank_min_soh_stale
+        state: "{{ trigger.to_state.state }}"
+        state_class: measurement
+        unit_of_measurement: "%"
+        icon: mdi:battery-heart-variant
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"
+
+  - trigger:
+      - platform: state
+        entity_id: sensor.panel_cuartoelectrico_bluesun_bank_max_cycles
+        not_to:
+          - unavailable
+          - unknown
+    sensor:
+      - name: "BlueSun Bank Max Cycles (stale)"
+        unique_id: bluesun_bank_max_cycles_stale
+        state: "{{ trigger.to_state.state }}"
+        state_class: measurement
+        icon: mdi:counter
+        attributes:
+          source_last_seen: "{{ trigger.to_state.last_changed }}"

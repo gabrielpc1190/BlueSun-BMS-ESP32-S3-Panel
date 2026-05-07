@@ -1,0 +1,86 @@
+# bluesun-bms-baseline.yaml
+# Diagnostic baseline — minimal firmware to validate that BLE central works on
+# your specific board before you start sinking time into LVGL or sensors.
+#
+# Only wifi + api + ota + esp32_ble + ble_client. Nothing else. Defaults
+# everywhere. If THIS firmware does not connect to your bank's master pack,
+# the production firmware in bluesun-bms-panel.yaml definitely will not.
+#
+# Expected log within ~5 seconds of boot:
+#   [I][esp32_ble_client]: 0x01 Connecting
+#   [I][esp32_ble_client]: Connection open
+#   [I][esp32_ble_client]: Service discovery complete
+# And in the config dump:
+#   [C][esp32_ble_client]:   Auto-Connect: TRUE
+#   [C][esp32_ble_client]:   State: ESTABLISHED
+#
+# If you instead see "ESP_GATTC_OPEN_EVT in DISCONNECTING state (status=133)"
+# 20 seconds after every connect attempt, read docs/04-lessons-learned.md
+# for the most common cause (someone added BT sdkconfig overrides that worked
+# in IDF 5.0/5.1 but break in IDF 5.5.4).
+
+substitutions:
+  name: "bluesun-bms-baseline"
+  friendly_name: "BlueSun BMS Baseline"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+  # NO sdkconfig_options. NO framework version pin. NO core pinning. NO coex SW
+  # override. The ESPHome / IDF 5.5.4 defaults handle BLE central correctly on
+  # ESP32-S3 dual-core. Anything else is a regression.
+
+# NO psram block here. The bank read does not need it. Add it back when you
+# move on to the production panel firmware.
+
+logger:
+  baud_rate: 115200
+  level: VERBOSE
+  hardware_uart: UART0
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: !secret panel_static_ip
+  fast_connect: true
+  ap:
+    ssid: "BlueSun-BMS-Baseline Hotspot"
+    password: !secret fallback_ap_password
+
+# === BLE: defaults everywhere ===
+esp32_ble:
+  # max_connections defaults to 3, io_capability defaults to none
+
+esp32_ble_tracker:
+  # scan_parameters defaults: interval 320ms, window 30ms, active true, continuous true
+  on_ble_advertise:
+    - mac_address: !secret bms_master_mac
+      then:
+        - lambda: |-
+            ESP_LOGI("ble_scan", "*** BMS seen rssi=%d ***", x.get_rssi());
+
+ble_client:
+  - id: bms
+    mac_address: !secret bms_master_mac
+    # auto_connect default is true — let it manage connection lifecycle
+    on_connect:
+      then:
+        - logger.log: { format: "*** BMS CONNECTED ***", level: INFO }
+    on_disconnect:
+      then:
+        - logger.log: { format: "*** BMS DISCONNECTED ***", level: WARN }

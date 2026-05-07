@@ -1,0 +1,59 @@
+# Home Assistant automation — alert when the BlueSun BMS proxy goes offline.
+#
+# Watches sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok (the canary
+# counter that increments on every successful parse). When the panel loses
+# WiFi or BLE for >3 minutes, this entity goes "unavailable" and the
+# automation fires.
+#
+# To deploy:
+#   1. Settings -> Automations & Scenes -> Create Automation -> Edit in YAML.
+#   2. Paste the body below.
+#   3. Find-and-replace:
+#        - sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok
+#          -> sensor.<your_panel>_bluesun_octopus_parses_ok
+#        - notify.mobile_app_REPLACE_ME -> your notify service (e.g. notify.mobile_app_pixel)
+#   4. Save.
+#
+# The 3-minute filter avoids noise from short BLE flaps.
+
+alias: BlueSun BMS - Offline Alert
+description: Notifica si el panel S3 cuartoelectrico (172.16.9.74) deja de leer el banco BlueSun (todos los sensores BMS unavailable
+  -> octopus_parses_ok tambien). Alerta tras 3 min para evitar notificaciones por reinicios breves o reconexion BLE transitoria.
+  Notifica tambien al volver online. Fan-out via notify.mobile_app_REPLACE_ME.
+triggers:
+- id: bms_offline
+  trigger: state
+  entity_id: sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok
+  to: unavailable
+  for: 00:03:00
+- id: bms_online
+  trigger: state
+  entity_id: sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok
+  from: unavailable
+conditions: []
+actions:
+- choose:
+  - conditions:
+    - condition: trigger
+      id: bms_offline
+    sequence:
+    - action: notify.mobile_app_REPLACE_ME
+      data:
+        title: 🔌 BlueSun BMS offline
+        message: 'Panel S3 cuartoelectrico sin lectura BMS desde {{ as_timestamp(trigger.from_state.last_changed) | timestamp_custom(''%H:%M'',
+          true) }}. Dashboard Battery mostrara ultimos valores conocidos con timestamp. Revisar WiFi/alimentacion del panel.
+
+          '
+  - conditions:
+    - condition: trigger
+      id: bms_online
+    sequence:
+    - action: notify.mobile_app_REPLACE_ME
+      data:
+        title: ✅ BlueSun BMS conectado
+        message: 'Panel S3 cuartoelectrico reanudo lectura BMS. Offline duro {{ ((as_timestamp(now()) - as_timestamp(trigger.from_state.last_changed))
+          / 60) | round(0) }} min. Datos nuevamente en tiempo real.
+
+          '
+mode: single
+max_exceeded: silent

@@ -1,0 +1,27 @@
+# ESPHome
+.esphome/
+.pioenvs/
+.piolibdeps/
+
+# Local secrets — never commit
+firmware/secrets.yaml
+secrets.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch
+_scratch/
+*.log.local

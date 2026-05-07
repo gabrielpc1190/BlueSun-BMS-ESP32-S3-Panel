@@ -1,0 +1,1017 @@
+# bluesun-bms-panel.yaml
+# Step 5: step4 + 3 vistas LVGL completas (Banco / Packs / Celdas) con mocks que
+# leen los sensores BMS reales y actualizan labels/bars via on_value.
+# Si BLE sigue conectando aqui, el firmware esta funcionalmente completo.
+
+substitutions:
+  name: "bluesun-bms-panel"
+  friendly_name: "BlueSun BMS Panel"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.4.0
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      # Imprescindible cuando el touch I2C usa GPIO19 (default ESP-IDF lo agarra para
+      # USB-Serial-JTAG silenciosamente y rompe el touch).
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: n
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  baud_rate: 115200
+  level: INFO
+  hardware_uart: UART0
+  logs:
+    component: ERROR
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: !secret panel_static_ip   # change to your reserved IP for OTA
+  fast_connect: true
+  ap:
+    ssid: "BlueSun-BMS-Panel Hotspot"
+    password: !secret fallback_ap_password
+
+# === BLE: TODO defaults ===
+esp32_ble:
+esp32_ble_tracker:
+  on_ble_advertise:
+    - mac_address: !secret bms_master_mac
+      then:
+        - lambda: |-
+            ESP_LOGI("ble_scan", "*** BMS visto: rssi=%d ***", x.get_rssi());
+
+ble_client:
+  - id: master
+    mac_address: !secret bms_master_mac
+    on_connect:
+      then:
+        - logger.log: { format: "*** BMS CONECTADO ***", level: INFO }
+        - delay: 1500ms       # da tiempo a service discovery antes que scheduler escriba
+    on_disconnect:
+      then:
+        - logger.log: { format: "*** BMS DESCONECTADO ***", level: WARN }
+
+# === Backlight PWM (GPIO38) ===
+output:
+  - platform: ledc
+    pin: GPIO38
+    id: backlight_pwm
+    frequency: 5000Hz
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Panel Backlight"
+    id: panel_backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 200ms
+
+# === Display ST7701S init via SPI sideband + RGB-565 16-bit @ 12 MHz ===
+spi:
+  - id: lcd_init_spi
+    clk_pin: GPIO48
+    mosi_pin: GPIO47
+    interface: software
+
+display:
+  - platform: st7701s
+    id: panel_display
+    spi_id: lcd_init_spi
+    cs_pin: GPIO39
+    de_pin: GPIO18
+    hsync_pin: GPIO16
+    vsync_pin: GPIO17
+    pclk_pin: GPIO21
+    pclk_frequency: 12MHz
+    data_pins:
+      red:    [GPIO11, GPIO12, GPIO13, GPIO14, GPIO0]
+      green:  [GPIO8, GPIO20, GPIO3, GPIO46, GPIO9, GPIO10]
+      blue:   [GPIO4, GPIO5, GPIO6, GPIO7, GPIO15]
+    dimensions:
+      width: 480
+      height: 480
+    hsync_back_porch: 10
+    hsync_front_porch: 50
+    hsync_pulse_width: 8
+    vsync_back_porch: 10
+    vsync_front_porch: 20
+    vsync_pulse_width: 8
+    update_interval: never       # sin LVGL todavia
+    auto_clear_enabled: false
+
+# === Touch GT911 (I2C @ 0x5D) ===
+i2c:
+  - id: bus_touch
+    sda: GPIO19
+    scl:
+      number: GPIO45
+      ignore_strapping_warning: true
+    scan: true
+    frequency: 100kHz
+
+touchscreen:
+  - platform: gt911
+    id: panel_touch
+    i2c_id: bus_touch
+    display: panel_display
+    transform:
+      mirror_x: false
+      mirror_y: false
+      swap_xy: false
+
+# === Fonts (Montserrat) — bpp:1 pixel-perfect, sin halo ===
+font:
+  - file: "gfonts://Montserrat@700"
+    id: font_xl
+    size: 96
+    bpp: 1
+    glyphs: "0123456789%-."
+  - file: "gfonts://Montserrat@700"
+    id: font_lg
+    size: 48
+    bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_md
+    size: 28
+    bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_sm
+    size: 20
+    bpp: 1
+
+# === Reloj HA ===
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: "America/El_Salvador"   # change to your local IANA timezone
+    on_time:
+      - seconds: 0
+        then:
+          - lvgl.label.update:
+              id: lbl_clock
+              text: !lambda |-
+                auto t = id(ha_time).now();
+                return str_sprintf("%02d:%02d", t.hour, t.minute);
+
+# === LVGL — 3 vistas: Banco / Packs / Celdas ===
+lvgl:
+  displays:
+    - panel_display
+  touchscreens:
+    - panel_touch
+  buffer_size: 12%
+  rotation: 270
+  log_level: WARN
+  theme:
+    obj:
+      bg_color: 0x000000
+      text_color: 0xFFFFFF
+      border_width: 0
+  pages:
+    - id: home_page
+      bg_color: 0x000000
+      on_swipe_left:
+        - lvgl.page.show: packs_page
+      widgets:
+        - label:
+            id: lbl_clock
+            text: "00:00"
+            text_font: font_md
+            text_color: 0xFFFFFF
+            align: TOP_RIGHT
+            x: -15
+            y: 10
+        - label:
+            id: lbl_mode_badge
+            text: ""
+            text_font: font_sm
+            text_color: 0xFFD700
+            align: TOP_LEFT
+            x: 10
+            y: 10
+        - label:
+            id: lbl_soc_big
+            text: "--%"
+            text_font: font_xl
+            text_color: 0x43A047
+            align: TOP_MID
+            y: 60
+        - bar:
+            id: bar_soc
+            min_value: 0
+            max_value: 100
+            value: 0
+            x: 40
+            y: 200
+            width: 400
+            height: 20
+            indicator:
+              bg_color: 0x43A047
+        - label:
+            id: lbl_vip
+            text: "-- V    -- A    -- W"
+            text_font: font_md
+            text_color: 0xFFFFFF
+            align: TOP_MID
+            y: 240
+        - label: { id: lbl_pack1, text: "P1 --%", text_font: font_sm, x: 30,  y: 320 }
+        - bar:
+            id: bar_pack1
+            x: 30
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pack2, text: "P2 --%", text_font: font_sm, x: 140, y: 320 }
+        - bar:
+            id: bar_pack2
+            x: 140
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pack3, text: "P3 --%", text_font: font_sm, text_color: 0xFFA726, x: 250, y: 320 }
+        - bar:
+            id: bar_pack3
+            x: 250
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            border_color: 0xFFA726
+            border_width: 2
+            indicator: { bg_color: 0xFFA726 }
+        - label: { id: lbl_pack4, text: "P4 --%", text_font: font_sm, x: 360, y: 320 }
+        - bar:
+            id: bar_pack4
+            x: 360
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label:
+            id: lbl_statusbar
+            text: "Banco *.."
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+    # === Vista 2 — Packs (grid 2x2) ===
+    - id: packs_page
+      bg_color: 0x000000
+      on_swipe_left:
+        - lvgl.page.show: cells_page
+      on_swipe_right:
+        - lvgl.page.show: home_page
+      widgets:
+        - label:
+            text: "PACKS"
+            text_font: font_md
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 10
+        - obj:
+            id: card_pack1
+            x: 20
+            y: 55
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 1;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 1" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { text: "Pack 1", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p1_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p1_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p1_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p1_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p1_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p1_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+        - obj:
+            id: card_pack2
+            x: 245
+            y: 55
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 2;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 2" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { text: "Pack 2", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p2_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p2_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p2_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p2_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p2_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p2_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+        - obj:
+            id: card_pack3
+            x: 20
+            y: 265
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0xFFA726
+            border_width: 2
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 3;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 3 (deg)" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { text: "Pack 3 (deg)", text_font: font_sm, text_color: 0xFFA726, x: 10, y: 5 }
+              - label: { id: lbl_p3_soc, text: "--%", text_font: font_lg, text_color: 0xFFA726, x: 10, y: 35 }
+              - label: { id: lbl_p3_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p3_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p3_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p3_d,   text: "d -- mV", text_font: font_sm, text_color: 0xFFA726, x: 110, y: 125 }
+              - label: { id: lbl_p3_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+        - obj:
+            id: card_pack4
+            x: 245
+            y: 265
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 4;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 4" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { text: "Pack 4", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p4_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p4_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p4_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p4_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p4_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p4_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+        - label:
+            text: "Banco .*."
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+    # === Vista 3 — Celdas (drill-down) ===
+    - id: cells_page
+      bg_color: 0x000000
+      on_swipe_right:
+        - lvgl.page.show: packs_page
+      widgets:
+        - label:
+            id: lbl_cells_title
+            text: "CELDAS - Pack X"
+            text_font: font_md
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 10
+        - label:
+            id: lbl_cells_v
+            text: "Vmin --  Vmax --  Vavg --  d -- mV"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 90
+        - label:
+            id: lbl_cells_t
+            text: "T1 --  T2 --  T3 --  T4 --"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 150
+        - label:
+            id: lbl_cells_env
+            text: "PCB --   ENV --"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 210
+        - label:
+            id: lbl_cells_hint
+            text: "(swipe -> volver a Packs)"
+            text_font: font_sm
+            text_color: 0x666666
+            align: BOTTOM_MID
+            y: -40
+        - label:
+            text: "Banco ..*"
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+# ============================================================================
+# === BMS protocolo Octopus (Octopus BMS protocol decode) ====
+# ============================================================================
+
+# === Globals: scheduler state ===
+globals:
+  - id: mock_soc
+    type: float
+    initial_value: '78.0'
+  - id: selected_pack
+    type: int
+    initial_value: '1'
+  # BMS scheduler state (replicado del C3 cuartoel)
+  - { id: current_pack,       type: uint8_t,  restore_value: no, initial_value: '0' }
+  - { id: current_cmd_idx,    type: uint8_t,  restore_value: no, initial_value: '0' }
+  - { id: should_send_now,    type: bool,     restore_value: no, initial_value: 'false' }
+  - { id: last_fast_ms,       type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: last_slow_ms,       type: uint32_t, restore_value: no, initial_value: '0' }
+  - { id: next_fast_pack,     type: uint8_t,  restore_value: no, initial_value: '1' }
+  - { id: next_slow_pack,     type: uint8_t,  restore_value: no, initial_value: '1' }
+  - { id: successful_parses,  type: uint32_t, restore_value: no, initial_value: '0' }
+
+# === BMS BLE: poll intervals ajustables desde HA ===
+number:
+  - platform: template
+    name: "BlueSun Poll Fast (cmd 0x10)"
+    id: poll_fast_s
+    min_value: 2.0
+    max_value: 60.0
+    step: 0.5
+    initial_value: 5.0
+    restore_value: true
+    optimistic: true
+    mode: slider
+    unit_of_measurement: "s"
+    icon: "mdi:speedometer"
+  - platform: template
+    name: "BlueSun Poll Slow (cmd 0x11)"
+    id: poll_slow_s
+    min_value: 30.0
+    max_value: 3600.0
+    step: 10.0
+    initial_value: 300.0
+    restore_value: true
+    optimistic: true
+    mode: box
+    unit_of_measurement: "s"
+    icon: "mdi:turtle"
+
+# Sin script: la escritura va via ble_client.ble_write action en el interval scheduler.
+# Razon: ESPHome libera el cache de services tras all_nodes_established_, asi que
+# id(master).get_characteristic() desde un script falla. ble_client.ble_write se
+# registra como node y guarda el char_handle uint16_t que sobrevive al release.
+
+# === Sensores: mocks (LVGL bridge) + parser octopus + 86 sensores BMS ===
+sensor:
+  # === Mock sensors: leen BMS real si has_state, fallback a constantes ===
+  # Su unico proposito util es disparar on_value -> lvgl.label.update.
+  - platform: template
+    name: "Mock Bank SoC"
+    id: mock_bank_soc
+    update_interval: 3s
+    accuracy_decimals: 1
+    lambda: |-
+      if (id(bank_soc_avg).has_state() && !isnan(id(bank_soc_avg).state))
+        return id(bank_soc_avg).state;
+      return id(mock_soc);
+    on_value:
+      - lvgl.label.update:
+          id: lbl_soc_big
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+          text_color: !lambda |-
+            if (x > 50.0)      return lv_color_hex(0x43A047);
+            else if (x > 25.0) return lv_color_hex(0xFFA726);
+            else               return lv_color_hex(0xEF5350);
+      - lvgl.bar.update:
+          id: bar_soc
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+
+  - platform: template
+    name: "Mock Bank V"
+    id: mock_bank_v
+    update_interval: 5s
+    lambda: |-
+      if (id(bank_voltage_avg).has_state() && !isnan(id(bank_voltage_avg).state))
+        return id(bank_voltage_avg).state;
+      return 0.0f;
+  - platform: template
+    name: "Mock Bank I"
+    id: mock_bank_i
+    update_interval: 5s
+    lambda: |-
+      if (id(bank_current_total).has_state() && !isnan(id(bank_current_total).state))
+        return id(bank_current_total).state;
+      return 0.0f;
+  - platform: template
+    name: "Mock Bank P"
+    id: mock_bank_p
+    update_interval: 5s
+    lambda: |-
+      if (id(bank_power).has_state() && !isnan(id(bank_power).state))
+        return id(bank_power).state;
+      return 0.0f;
+    on_value:
+      - lvgl.label.update:
+          id: lbl_vip
+          text: !lambda |-
+            return str_sprintf("%.1f V    %.1f A    %.0f W",
+                               id(mock_bank_v).state,
+                               id(mock_bank_i).state,
+                               id(mock_bank_p).state);
+
+  # Pack SoC mocks: actualizan home_page mini-bars + packs_page cards
+  - platform: template
+    name: "Mock Pack 1 SoC"
+    id: mock_pack1_soc
+    update_interval: 7s
+    lambda: |-
+      if (id(pack01_soc).has_state() && !isnan(id(pack01_soc).state)) return id(pack01_soc).state;
+      return 0.0f;
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack1
+          text: !lambda 'return str_sprintf("P1 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack1
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p1_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - platform: template
+    name: "Mock Pack 2 SoC"
+    id: mock_pack2_soc
+    update_interval: 7s
+    lambda: |-
+      if (id(pack02_soc).has_state() && !isnan(id(pack02_soc).state)) return id(pack02_soc).state;
+      return 0.0f;
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack2
+          text: !lambda 'return str_sprintf("P2 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack2
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p2_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - platform: template
+    name: "Mock Pack 3 SoC"
+    id: mock_pack3_soc
+    update_interval: 7s
+    lambda: |-
+      if (id(pack03_soc).has_state() && !isnan(id(pack03_soc).state)) return id(pack03_soc).state;
+      return 0.0f;
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack3
+          text: !lambda 'return str_sprintf("P3 %.0f%%", x);'
+          text_color: !lambda 'return lv_color_hex(0xFFA726);'
+      - lvgl.bar.update:
+          id: bar_pack3
+          value: !lambda 'return (int)x;'
+      - lvgl.label.update:
+          id: lbl_p3_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - platform: template
+    name: "Mock Pack 4 SoC"
+    id: mock_pack4_soc
+    update_interval: 7s
+    lambda: |-
+      if (id(pack04_soc).has_state() && !isnan(id(pack04_soc).state)) return id(pack04_soc).state;
+      return 0.0f;
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack4
+          text: !lambda 'return str_sprintf("P4 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack4
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p4_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+
+  # NOTA: las cards (V/I/T/d/SoH) y la cells_page se actualizan via interval:
+  # de abajo, no via on_value de un sensor template (un template que retorna
+  # constante solo dispara on_value una vez).
+
+  # === BMS BLE: parser de notificaciones FFF1 (cmd 0x10 + cmd 0x11) ===
+  - platform: ble_client
+    id: octopus_notify_rx
+    internal: true
+    ble_client_id: master
+    type: characteristic
+    service_uuid: "FFF0"
+    characteristic_uuid: "FFF1"
+    notify: true
+    update_interval: never
+    name: "Octopus RX (internal)"
+    lambda: |-
+      if (x.size() < 10) return {};
+      auto crc16_modbus = [](const uint8_t *data, size_t len) -> uint16_t {
+        uint16_t crc = 0xFFFF;
+        for (size_t i = 0; i < len; i++) {
+          crc ^= data[i];
+          for (int j = 0; j < 8; j++) {
+            crc = (crc & 1) ? (crc >> 1) ^ 0xA001 : (crc >> 1);
+          }
+        }
+        return crc;
+      };
+      uint16_t calc = crc16_modbus(x.data(), x.size() - 2);
+      uint16_t recv = x[x.size()-2] | (x[x.size()-1] << 8);
+      if (calc != recv) {
+        ESP_LOGW("octopus", "CRC mismatch");
+        return {};
+      }
+      uint8_t a1 = x[0];
+      uint8_t rsp = x[2];
+      auto rd_u16 = [&](int off) -> uint16_t { return (x[3+off] << 8) | x[3+off+1]; };
+      auto rd_s16 = [&](int off) -> int16_t { return (int16_t)rd_u16(off); };
+      if (rsp == 0x24 && x.size() >= 3 + 36) {
+        float voltage = rd_u16(0) / 100.0f;
+        float current = rd_s16(2) / 100.0f;
+        float rem_ah = rd_u16(4) / 100.0f;
+        float nom_ah = rd_u16(6) / 100.0f;
+        float soc = rd_u16(10) / 10.0f;
+        float soh = rd_u16(12) / 10.0f;
+        uint16_t cycles = rd_u16(14);
+        ESP_LOGI("octopus", "pack=%d U=%.2fV I=%.2fA SoC=%.1f%%", a1, voltage, current, soc);
+        id(successful_parses) += 1;
+        switch (a1) {
+          case 1:
+            id(pack01_voltage).publish_state(voltage); id(pack01_current).publish_state(current);
+            id(pack01_soc).publish_state(soc); id(pack01_soh).publish_state(soh);
+            id(pack01_cycles).publish_state(cycles);
+            id(pack01_remaining_ah).publish_state(rem_ah); id(pack01_nominal_ah).publish_state(nom_ah);
+            break;
+          case 2:
+            id(pack02_voltage).publish_state(voltage); id(pack02_current).publish_state(current);
+            id(pack02_soc).publish_state(soc); id(pack02_soh).publish_state(soh);
+            id(pack02_cycles).publish_state(cycles);
+            id(pack02_remaining_ah).publish_state(rem_ah); id(pack02_nominal_ah).publish_state(nom_ah);
+            break;
+          case 3:
+            id(pack03_voltage).publish_state(voltage); id(pack03_current).publish_state(current);
+            id(pack03_soc).publish_state(soc); id(pack03_soh).publish_state(soh);
+            id(pack03_cycles).publish_state(cycles);
+            id(pack03_remaining_ah).publish_state(rem_ah); id(pack03_nominal_ah).publish_state(nom_ah);
+            break;
+          case 4:
+            id(pack04_voltage).publish_state(voltage); id(pack04_current).publish_state(current);
+            id(pack04_soc).publish_state(soc); id(pack04_soh).publish_state(soh);
+            id(pack04_cycles).publish_state(cycles);
+            id(pack04_remaining_ah).publish_state(rem_ah); id(pack04_nominal_ah).publish_state(nom_ah);
+            break;
+        }
+        return {};
+      }
+      if (rsp == 0x34 && x.size() >= 3 + 52) {
+        uint16_t cmin = 0xFFFF, cmax = 0;
+        uint32_t csum = 0;
+        for (int i = 0; i < 16; i++) {
+          uint16_t v = rd_u16(i * 2);
+          if (v < cmin) cmin = v;
+          if (v > cmax) cmax = v;
+          csum += v;
+        }
+        uint16_t cavg = csum / 16;
+        uint16_t cdelta = cmax - cmin;
+        size_t body_len = x.size() - 3 - 2;
+        size_t tail_start = (body_len == 54) ? 34 : 32;
+        auto k10_to_c = [](uint16_t v) -> float {
+          return (v == 0x0AAB) ? NAN : (v / 10.0f - 273.15f);
+        };
+        float t_cell[4];
+        for (int i = 0; i < 4; i++) t_cell[i] = k10_to_c(rd_u16(tail_start + i * 2));
+        float t_env = k10_to_c(rd_u16(tail_start + 16));
+        float t_pcb = k10_to_c(rd_u16(tail_start + 18));
+        ESP_LOGI("octopus", "pack=%d cells[%d/%d/%d d%d] temps[%.1f/%.1f env=%.1f pcb=%.1f]",
+                 a1, cmin, cmax, cavg, cdelta, t_cell[0], t_cell[1], t_env, t_pcb);
+        id(successful_parses) += 1;
+        #define PUBLISH_CT(P) do { \
+            id(pack##P##_cell_v_min).publish_state(cmin); id(pack##P##_cell_v_max).publish_state(cmax); \
+            id(pack##P##_cell_v_avg).publish_state(cavg); id(pack##P##_cell_v_delta).publish_state(cdelta); \
+            if (!isnan(t_cell[0])) id(pack##P##_cell_temp_1).publish_state(t_cell[0]); \
+            if (!isnan(t_cell[1])) id(pack##P##_cell_temp_2).publish_state(t_cell[1]); \
+            if (!isnan(t_cell[2])) id(pack##P##_cell_temp_3).publish_state(t_cell[2]); \
+            if (!isnan(t_cell[3])) id(pack##P##_cell_temp_4).publish_state(t_cell[3]); \
+            if (!isnan(t_env))     id(pack##P##_env_temp).publish_state(t_env); \
+            if (!isnan(t_pcb))     id(pack##P##_pcb_temp).publish_state(t_pcb); \
+          } while (0)
+        switch (a1) {
+          case 1: PUBLISH_CT(01); break;
+          case 2: PUBLISH_CT(02); break;
+          case 3: PUBLISH_CT(03); break;
+          case 4: PUBLISH_CT(04); break;
+        }
+        #undef PUBLISH_CT
+        return {};
+      }
+      return {};
+
+  # === BMS sensors per-pack: cmd 0x10 (7 × 4 = 28) ===
+  - {platform: template, id: pack01_voltage,      name: "BlueSun Pack01 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
+  - {platform: template, id: pack01_current,      name: "BlueSun Pack01 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - {platform: template, id: pack01_soc,          name: "BlueSun Pack01 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
+  - {platform: template, id: pack01_soh,          name: "BlueSun Pack01 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
+  - {platform: template, id: pack01_cycles,       name: "BlueSun Pack01 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
+  - {platform: template, id: pack01_remaining_ah, name: "BlueSun Pack01 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
+  - {platform: template, id: pack01_nominal_ah,   name: "BlueSun Pack01 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
+  - {platform: template, id: pack02_voltage,      name: "BlueSun Pack02 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
+  - {platform: template, id: pack02_current,      name: "BlueSun Pack02 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - {platform: template, id: pack02_soc,          name: "BlueSun Pack02 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
+  - {platform: template, id: pack02_soh,          name: "BlueSun Pack02 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
+  - {platform: template, id: pack02_cycles,       name: "BlueSun Pack02 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
+  - {platform: template, id: pack02_remaining_ah, name: "BlueSun Pack02 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
+  - {platform: template, id: pack02_nominal_ah,   name: "BlueSun Pack02 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
+  - {platform: template, id: pack03_voltage,      name: "BlueSun Pack03 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
+  - {platform: template, id: pack03_current,      name: "BlueSun Pack03 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - {platform: template, id: pack03_soc,          name: "BlueSun Pack03 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
+  - {platform: template, id: pack03_soh,          name: "BlueSun Pack03 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
+  - {platform: template, id: pack03_cycles,       name: "BlueSun Pack03 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
+  - {platform: template, id: pack03_remaining_ah, name: "BlueSun Pack03 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
+  - {platform: template, id: pack03_nominal_ah,   name: "BlueSun Pack03 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
+  - {platform: template, id: pack04_voltage,      name: "BlueSun Pack04 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
+  - {platform: template, id: pack04_current,      name: "BlueSun Pack04 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - {platform: template, id: pack04_soc,          name: "BlueSun Pack04 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
+  - {platform: template, id: pack04_soh,          name: "BlueSun Pack04 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
+  - {platform: template, id: pack04_cycles,       name: "BlueSun Pack04 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
+  - {platform: template, id: pack04_remaining_ah, name: "BlueSun Pack04 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
+  - {platform: template, id: pack04_nominal_ah,   name: "BlueSun Pack04 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
+
+  # === BMS sensors per-pack: cmd 0x11 (cells V min/max/avg/delta + 4 cell_temps + env + pcb) ===
+  - {platform: template, id: pack01_cell_v_min,   name: "BlueSun Pack01 Cell V min",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-down-box"}
+  - {platform: template, id: pack01_cell_v_max,   name: "BlueSun Pack01 Cell V max",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-up-box"}
+  - {platform: template, id: pack01_cell_v_avg,   name: "BlueSun Pack01 Cell V avg",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:checkbox-blank-outline"}
+  - {platform: template, id: pack01_cell_v_delta, name: "BlueSun Pack01 Cell V delta", unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:unfold-more-horizontal"}
+  - {platform: template, id: pack02_cell_v_min,   name: "BlueSun Pack02 Cell V min",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-down-box"}
+  - {platform: template, id: pack02_cell_v_max,   name: "BlueSun Pack02 Cell V max",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-up-box"}
+  - {platform: template, id: pack02_cell_v_avg,   name: "BlueSun Pack02 Cell V avg",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:checkbox-blank-outline"}
+  - {platform: template, id: pack02_cell_v_delta, name: "BlueSun Pack02 Cell V delta", unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:unfold-more-horizontal"}
+  - {platform: template, id: pack03_cell_v_min,   name: "BlueSun Pack03 Cell V min",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-down-box"}
+  - {platform: template, id: pack03_cell_v_max,   name: "BlueSun Pack03 Cell V max",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-up-box"}
+  - {platform: template, id: pack03_cell_v_avg,   name: "BlueSun Pack03 Cell V avg",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:checkbox-blank-outline"}
+  - {platform: template, id: pack03_cell_v_delta, name: "BlueSun Pack03 Cell V delta", unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:unfold-more-horizontal"}
+  - {platform: template, id: pack04_cell_v_min,   name: "BlueSun Pack04 Cell V min",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-down-box"}
+  - {platform: template, id: pack04_cell_v_max,   name: "BlueSun Pack04 Cell V max",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:arrow-up-box"}
+  - {platform: template, id: pack04_cell_v_avg,   name: "BlueSun Pack04 Cell V avg",   unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:checkbox-blank-outline"}
+  - {platform: template, id: pack04_cell_v_delta, name: "BlueSun Pack04 Cell V delta", unit_of_measurement: "mV", accuracy_decimals: 0, state_class: measurement, icon: "mdi:unfold-more-horizontal"}
+  - {platform: template, id: pack01_cell_temp_1,  name: "BlueSun Pack01 Cell Temp 1",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack01_cell_temp_2,  name: "BlueSun Pack01 Cell Temp 2",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack01_cell_temp_3,  name: "BlueSun Pack01 Cell Temp 3",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack01_cell_temp_4,  name: "BlueSun Pack01 Cell Temp 4",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack02_cell_temp_1,  name: "BlueSun Pack02 Cell Temp 1",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack02_cell_temp_2,  name: "BlueSun Pack02 Cell Temp 2",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack02_cell_temp_3,  name: "BlueSun Pack02 Cell Temp 3",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack02_cell_temp_4,  name: "BlueSun Pack02 Cell Temp 4",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack03_cell_temp_1,  name: "BlueSun Pack03 Cell Temp 1",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack03_cell_temp_2,  name: "BlueSun Pack03 Cell Temp 2",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack03_cell_temp_3,  name: "BlueSun Pack03 Cell Temp 3",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack03_cell_temp_4,  name: "BlueSun Pack03 Cell Temp 4",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack04_cell_temp_1,  name: "BlueSun Pack04 Cell Temp 1",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack04_cell_temp_2,  name: "BlueSun Pack04 Cell Temp 2",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack04_cell_temp_3,  name: "BlueSun Pack04 Cell Temp 3",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack04_cell_temp_4,  name: "BlueSun Pack04 Cell Temp 4",  unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement}
+  - {platform: template, id: pack01_env_temp,     name: "BlueSun Pack01 Env Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:home-thermometer"}
+  - {platform: template, id: pack01_pcb_temp,     name: "BlueSun Pack01 PCB Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:chip"}
+  - {platform: template, id: pack02_env_temp,     name: "BlueSun Pack02 Env Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:home-thermometer"}
+  - {platform: template, id: pack02_pcb_temp,     name: "BlueSun Pack02 PCB Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:chip"}
+  - {platform: template, id: pack03_env_temp,     name: "BlueSun Pack03 Env Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:home-thermometer"}
+  - {platform: template, id: pack03_pcb_temp,     name: "BlueSun Pack03 PCB Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:chip"}
+  - {platform: template, id: pack04_env_temp,     name: "BlueSun Pack04 Env Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:home-thermometer"}
+  - {platform: template, id: pack04_pcb_temp,     name: "BlueSun Pack04 PCB Temp",     unit_of_measurement: "°C", accuracy_decimals: 1, device_class: temperature, state_class: measurement, icon: "mdi:chip"}
+
+  # === Bank aggregates (10) ===
+  - { platform: template, name: "BlueSun Bank Voltage Avg",  id: bank_voltage_avg,  unit_of_measurement: "V",  device_class: voltage, state_class: measurement, accuracy_decimals: 2, update_interval: 15s,
+      lambda: 'float sum=0; int n=0; for (auto *s : {id(pack01_voltage),id(pack02_voltage),id(pack03_voltage),id(pack04_voltage)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; n++; } return n>0?sum/n:NAN;' }
+  - { platform: template, name: "BlueSun Bank Current Total", id: bank_current_total, unit_of_measurement: "A", device_class: current, state_class: measurement, accuracy_decimals: 2, update_interval: 15s,
+      lambda: 'float sum=0; bool any=false; for (auto *s : {id(pack01_current),id(pack02_current),id(pack03_current),id(pack04_current)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; any=true; } return any?sum:NAN;' }
+  - { platform: template, name: "BlueSun Bank SoC Avg",      id: bank_soc_avg,      unit_of_measurement: "%",  device_class: battery, state_class: measurement, accuracy_decimals: 1, update_interval: 15s,
+      lambda: 'float sum=0; int n=0; for (auto *s : {id(pack01_soc),id(pack02_soc),id(pack03_soc),id(pack04_soc)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; n++; } return n>0?sum/n:NAN;' }
+  - { platform: template, name: "BlueSun Bank Power",        id: bank_power,        unit_of_measurement: "W",  device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
+      lambda: 'float v=id(bank_voltage_avg).state; float i=id(bank_current_total).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
+  - { platform: template, name: "BlueSun Bank SoC Spread",   id: bank_soc_spread,   unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:arrow-expand-horizontal", update_interval: 15s,
+      lambda: 'float mn=999.0f,mx=-999.0f; for (auto *s : {id(pack01_soc),id(pack02_soc),id(pack03_soc),id(pack04_soc)}) if (s->has_state() && !isnan(s->state)) { if (s->state<mn) mn=s->state; if (s->state>mx) mx=s->state; } return (mx>=-999.0f && mn<=999.0f) ? (mx-mn) : NAN;' }
+  - { platform: template, name: "BlueSun Bank Remaining Ah", id: bank_remaining_ah, unit_of_measurement: "Ah", state_class: measurement, accuracy_decimals: 2, update_interval: 15s, icon: "mdi:battery-outline",
+      lambda: 'float sum=0; bool any=false; for (auto *s : {id(pack01_remaining_ah),id(pack02_remaining_ah),id(pack03_remaining_ah),id(pack04_remaining_ah)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; any=true; } return any?sum:NAN;' }
+  - { platform: template, name: "BlueSun Bank Nominal Ah",   id: bank_nominal_ah,   unit_of_measurement: "Ah", state_class: measurement, accuracy_decimals: 2, update_interval: 60s, icon: "mdi:battery-high",
+      lambda: 'float sum=0; bool any=false; for (auto *s : {id(pack01_nominal_ah),id(pack02_nominal_ah),id(pack03_nominal_ah),id(pack04_nominal_ah)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; any=true; } return any?sum:NAN;' }
+  - { platform: template, name: "BlueSun Bank Min SoH",      id: bank_min_soh,      unit_of_measurement: "%",  state_class: measurement, accuracy_decimals: 1, update_interval: 60s, icon: "mdi:battery-heart-variant",
+      lambda: 'float mn=200.0f; for (auto *s : {id(pack01_soh),id(pack02_soh),id(pack03_soh),id(pack04_soh)}) if (s->has_state() && !isnan(s->state) && s->state<mn) mn=s->state; return mn<200.0f?mn:NAN;' }
+  - platform: template
+    name: "BlueSun Bank Max Cell Temp"
+    id: bank_max_cell_temp
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 30s
+    lambda: |-
+      float mx = -999.0f;
+      std::initializer_list<esphome::sensor::Sensor*> all = {
+        id(pack01_cell_temp_1), id(pack01_cell_temp_2), id(pack01_cell_temp_3), id(pack01_cell_temp_4),
+        id(pack02_cell_temp_1), id(pack02_cell_temp_2), id(pack02_cell_temp_3), id(pack02_cell_temp_4),
+        id(pack03_cell_temp_1), id(pack03_cell_temp_2), id(pack03_cell_temp_3), id(pack03_cell_temp_4),
+        id(pack04_cell_temp_1), id(pack04_cell_temp_2), id(pack04_cell_temp_3), id(pack04_cell_temp_4),
+      };
+      for (auto *s : all) {
+        if (s->has_state() && !isnan(s->state) && s->state > mx) mx = s->state;
+      }
+      return mx > -999.0f ? mx : NAN;
+  - { platform: template, name: "BlueSun Bank Max Cycles", id: bank_max_cycles, accuracy_decimals: 0, state_class: measurement, update_interval: 60s, icon: "mdi:counter",
+      lambda: 'float mx=-1.0f; for (auto *s : {id(pack01_cycles),id(pack02_cycles),id(pack03_cycles),id(pack04_cycles)}) if (s->has_state() && !isnan(s->state) && s->state>mx) mx=s->state; return mx>=0.0f?mx:NAN;' }
+
+  # === Energy dashboard (charging/discharging splits + integrals) ===
+  - { platform: template, id: bank_power_charging,    name: "BlueSun Bank Power Charging",    unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s, icon: "mdi:battery-plus-variant",
+      lambda: 'float p=id(bank_power).state; if (isnan(p)||p<0.0f) return 0.0f; return p;' }
+  - { platform: template, id: bank_power_discharging, name: "BlueSun Bank Power Discharging", unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s, icon: "mdi:battery-minus-variant",
+      lambda: 'float p=id(bank_power).state; if (isnan(p)||p>0.0f) return 0.0f; return -p;' }
+  - { platform: integration, id: bank_energy_in,  name: "BlueSun Battery Energy In",  sensor: bank_power_charging,    time_unit: h, unit_of_measurement: "Wh", device_class: energy, state_class: total_increasing, accuracy_decimals: 2, icon: "mdi:battery-arrow-up",   restore: true }
+  - { platform: integration, id: bank_energy_out, name: "BlueSun Battery Energy Out", sensor: bank_power_discharging, time_unit: h, unit_of_measurement: "Wh", device_class: energy, state_class: total_increasing, accuracy_decimals: 2, icon: "mdi:battery-arrow-down", restore: true }
+  - { platform: template, name: "BlueSun Octopus parses OK", id: octopus_parses_ok, accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:check-network-outline", update_interval: 60s,
+      lambda: 'return id(successful_parses);' }
+
+# === Scheduler BLE polling ===
+# === Scheduler BLE polling (cmd 0x10 fast + cmd 0x11 slow, alterna 4 packs) ===
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          id(should_send_now) = false;
+          if (!id(master).connected()) return;
+          uint32_t now = millis();
+          float fast_s = id(poll_fast_s).state;
+          if (isnan(fast_s) || fast_s < 2.0f) fast_s = 5.0f;
+          uint32_t fast_step_ms = (uint32_t)(fast_s * 1000.0f / 4.0f);
+          if (fast_step_ms < 300) fast_step_ms = 300;
+          if (now - id(last_fast_ms) >= fast_step_ms) {
+            id(last_fast_ms) = now;
+            id(current_pack) = id(next_fast_pack);
+            id(current_cmd_idx) = 0;
+            id(should_send_now) = true;
+            id(next_fast_pack) = (id(next_fast_pack) % 4) + 1;
+            return;
+          }
+          float slow_s = id(poll_slow_s).state;
+          if (isnan(slow_s) || slow_s < 30.0f) slow_s = 300.0f;
+          uint32_t slow_step_ms = (uint32_t)(slow_s * 1000.0f / 4.0f);
+          if (slow_step_ms < 5000) slow_step_ms = 5000;
+          if (now - id(last_slow_ms) >= slow_step_ms) {
+            id(last_slow_ms) = now;
+            id(current_pack) = id(next_slow_pack);
+            id(current_cmd_idx) = 1;
+            id(should_send_now) = true;
+            id(next_slow_pack) = (id(next_slow_pack) % 4) + 1;
+          }
+      - if:
+          condition:
+            lambda: 'return id(should_send_now);'
+          then:
+            - ble_client.ble_write:
+                id: master
+                service_uuid: FFF0
+                characteristic_uuid: FFF2
+                value: !lambda |-
+                  static const uint8_t QUERIES[2][4][8] = {
+                    {
+                      {0x01, 0x04, 0x10, 0x00, 0x00, 0x12, 0x74, 0xc7},
+                      {0x02, 0x04, 0x10, 0x00, 0x00, 0x12, 0x74, 0xf4},
+                      {0x03, 0x04, 0x10, 0x00, 0x00, 0x12, 0x75, 0x25},
+                      {0x04, 0x04, 0x10, 0x00, 0x00, 0x12, 0x74, 0x92}
+                    },
+                    {
+                      {0x01, 0x04, 0x11, 0x00, 0x00, 0x1a, 0x74, 0xfd},
+                      {0x02, 0x04, 0x11, 0x00, 0x00, 0x1a, 0x74, 0xce},
+                      {0x03, 0x04, 0x11, 0x00, 0x00, 0x1a, 0x75, 0x1f},
+                      {0x04, 0x04, 0x11, 0x00, 0x00, 0x1a, 0x74, 0xa8}
+                    }
+                  };
+                  uint8_t p = id(current_pack);
+                  uint8_t c = id(current_cmd_idx);
+                  if (p < 1 || p > 4 || c > 1) return std::vector<uint8_t>{};
+                  return std::vector<uint8_t>(QUERIES[c][p-1], QUERIES[c][p-1] + 8);
+
+  # === Update labels Packs cards + Cells page cada 5s ===
+  - interval: 5s
+    then:
+      - lvgl.label.update: { id: lbl_p1_v, text: !lambda 'return id(pack01_voltage).has_state() ? str_sprintf("%.1f V", id(pack01_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update: { id: lbl_p1_i, text: !lambda 'return id(pack01_current).has_state() ? str_sprintf("%.1f A", id(pack01_current).state) : std::string("-- A");' }
+      - lvgl.label.update: { id: lbl_p1_t, text: !lambda 'return id(pack01_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack01_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p1_d, text: !lambda 'return id(pack01_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack01_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p1_soh, text: !lambda 'return id(pack01_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack01_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p2_v, text: !lambda 'return id(pack02_voltage).has_state() ? str_sprintf("%.1f V", id(pack02_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update: { id: lbl_p2_i, text: !lambda 'return id(pack02_current).has_state() ? str_sprintf("%.1f A", id(pack02_current).state) : std::string("-- A");' }
+      - lvgl.label.update: { id: lbl_p2_t, text: !lambda 'return id(pack02_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack02_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p2_d, text: !lambda 'return id(pack02_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack02_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p2_soh, text: !lambda 'return id(pack02_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack02_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p3_v, text: !lambda 'return id(pack03_voltage).has_state() ? str_sprintf("%.1f V", id(pack03_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update: { id: lbl_p3_i, text: !lambda 'return id(pack03_current).has_state() ? str_sprintf("%.1f A", id(pack03_current).state) : std::string("-- A");' }
+      - lvgl.label.update: { id: lbl_p3_t, text: !lambda 'return id(pack03_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack03_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p3_d, text: !lambda 'return id(pack03_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack03_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p3_soh, text: !lambda 'return id(pack03_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack03_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p4_v, text: !lambda 'return id(pack04_voltage).has_state() ? str_sprintf("%.1f V", id(pack04_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update: { id: lbl_p4_i, text: !lambda 'return id(pack04_current).has_state() ? str_sprintf("%.1f A", id(pack04_current).state) : std::string("-- A");' }
+      - lvgl.label.update: { id: lbl_p4_t, text: !lambda 'return id(pack04_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack04_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p4_d, text: !lambda 'return id(pack04_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack04_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p4_soh, text: !lambda 'return id(pack04_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack04_soh).state) : std::string("SoH --%");' }
+      # Cells page (segun selected_pack)
+      - lvgl.label.update:
+          id: lbl_cells_v
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *vmin=nullptr, *vmax=nullptr, *vavg=nullptr, *vdelta=nullptr;
+            switch (p) {
+              case 1: vmin=id(pack01_cell_v_min); vmax=id(pack01_cell_v_max); vavg=id(pack01_cell_v_avg); vdelta=id(pack01_cell_v_delta); break;
+              case 2: vmin=id(pack02_cell_v_min); vmax=id(pack02_cell_v_max); vavg=id(pack02_cell_v_avg); vdelta=id(pack02_cell_v_delta); break;
+              case 3: vmin=id(pack03_cell_v_min); vmax=id(pack03_cell_v_max); vavg=id(pack03_cell_v_avg); vdelta=id(pack03_cell_v_delta); break;
+              case 4: vmin=id(pack04_cell_v_min); vmax=id(pack04_cell_v_max); vavg=id(pack04_cell_v_avg); vdelta=id(pack04_cell_v_delta); break;
+              default: return std::string("Vmin --");
+            }
+            if (!vmin->has_state()) return std::string("Vmin --");
+            return str_sprintf("Vmin %.3f  Vmax %.3f  Vavg %.3f  d %.0f mV",
+              vmin->state/1000.0f, vmax->state/1000.0f, vavg->state/1000.0f, vdelta->state);
+      - lvgl.label.update:
+          id: lbl_cells_t
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *t1=nullptr,*t2=nullptr,*t3=nullptr,*t4=nullptr;
+            switch (p) {
+              case 1: t1=id(pack01_cell_temp_1); t2=id(pack01_cell_temp_2); t3=id(pack01_cell_temp_3); t4=id(pack01_cell_temp_4); break;
+              case 2: t1=id(pack02_cell_temp_1); t2=id(pack02_cell_temp_2); t3=id(pack02_cell_temp_3); t4=id(pack02_cell_temp_4); break;
+              case 3: t1=id(pack03_cell_temp_1); t2=id(pack03_cell_temp_2); t3=id(pack03_cell_temp_3); t4=id(pack03_cell_temp_4); break;
+              case 4: t1=id(pack04_cell_temp_1); t2=id(pack04_cell_temp_2); t3=id(pack04_cell_temp_3); t4=id(pack04_cell_temp_4); break;
+              default: return std::string("T1 --");
+            }
+            if (!t1->has_state()) return std::string("T1 --");
+            return str_sprintf("T1 %.0f  T2 %.0f  T3 %.0f  T4 %.0f", t1->state, t2->state, t3->state, t4->state);
+      - lvgl.label.update:
+          id: lbl_cells_env
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *env=nullptr,*pcb=nullptr;
+            switch (p) {
+              case 1: env=id(pack01_env_temp); pcb=id(pack01_pcb_temp); break;
+              case 2: env=id(pack02_env_temp); pcb=id(pack02_pcb_temp); break;
+              case 3: env=id(pack03_env_temp); pcb=id(pack03_pcb_temp); break;
+              case 4: env=id(pack04_env_temp); pcb=id(pack04_pcb_temp); break;
+              default: return std::string("PCB --   ENV --");
+            }
+            if (!env->has_state()) return std::string("PCB --   ENV --");
+            return str_sprintf("PCB %.0f C   ENV %.0f C", pcb->state, env->state);

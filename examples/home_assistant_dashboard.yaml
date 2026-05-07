@@ -1,0 +1,338 @@
+# Home Assistant Battery dashboard view — example for the BlueSun BMS panel.
+#
+# This is a single VIEW (not a full dashboard). Drop it into the views: list of
+# any storage-mode dashboard, or use it as the body of a yaml-mode dashboard.
+#
+# Entity prefix used here: sensor.panel_cuartoelectrico_bluesun_*
+# After importing, find-and-replace with YOUR panel's actual prefix
+# (e.g. sensor.bluesun_bms_panel_bluesun_*) — depends on the name: substitution
+# you set in firmware/bluesun-bms-panel.yaml.
+#
+# Optional dependencies:
+#   - mini-graph-card (HACS) — for the per-cell voltage chart
+# If not installed, drop those entries; the rest of the view works on stock HA.
+
+title: Battery
+path: battery
+icon: mdi:battery
+subview: true
+badges:
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_soc_avg
+  name: SoC banco
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_power
+  name: Potencia
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_current_total
+  name: Corriente banco
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_voltage_avg
+  name: V promedio
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_soc_spread
+  name: Spread SoC
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_max_cell_temp
+  name: T° máx
+- type: entity
+  show_name: true
+  show_state: true
+  show_icon: true
+  entity: sensor.panel_cuartoelectrico_bluesun_bank_min_soh
+  name: SoH mín
+cards:
+- type: entities
+  title: Banco BlueSun
+  show_header_toggle: false
+  entities:
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_soc_avg
+    name: SoC promedio
+    icon: mdi:battery-70
+    secondary_info: last-changed
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_remaining_ah
+    name: Capacidad remanente (total)
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_nominal_ah
+    name: Capacidad nominal (total)
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_voltage_avg
+    name: Voltaje promedio packs
+    secondary_info: last-changed
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_current_total
+    name: Corriente total (+ carga, − descarga)
+    secondary_info: last-changed
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_power
+    name: Potencia instantánea
+    secondary_info: last-changed
+  - type: section
+    label: Energía acumulada (lifetime, para Energy Dashboard)
+  - entity: sensor.panel_cuartoelectrico_bluesun_battery_energy_in
+    name: Energía entrada (charging)
+  - entity: sensor.panel_cuartoelectrico_bluesun_battery_energy_out
+    name: Energía salida (discharging)
+  - type: section
+    label: Salud del banco
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_soc_spread
+    name: Spread SoC entre packs
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_min_soh
+    name: SoH mínimo
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_max_cycles
+    name: Ciclos máximos
+  - entity: sensor.panel_cuartoelectrico_bluesun_bank_max_cell_temp
+    name: Temp máx celda
+- type: grid
+  columns: 2
+  square: false
+  cards:
+  - type: entities
+    title: Pack 1
+    icon: mdi:battery
+    state_color: true
+    entities:
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_soc
+      name: SoC
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_voltage
+      name: Voltaje
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_current
+      name: Corriente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_soh
+      name: SoH
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cycles
+      name: Ciclos
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_remaining_ah
+      name: Remanente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_nominal_ah
+      name: Nominal
+    - type: section
+      label: Celdas y temperatura
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_v_min
+      name: Cell V min
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_v_max
+      name: Cell V max
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_v_delta
+      name: Cell V Δ
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_temp_1
+      name: Cell T1
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_temp_2
+      name: Cell T2
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_temp_3
+      name: Cell T3
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_cell_temp_4
+      name: Cell T4
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_env_temp
+      name: Env T
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack01_pcb_temp
+      name: PCB T
+  - type: entities
+    title: Pack 2
+    icon: mdi:battery
+    state_color: true
+    entities:
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_soc
+      name: SoC
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_voltage
+      name: Voltaje
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_current
+      name: Corriente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_soh
+      name: SoH
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cycles
+      name: Ciclos
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_remaining_ah
+      name: Remanente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_nominal_ah
+      name: Nominal
+    - type: section
+      label: Celdas y temperatura
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_v_min
+      name: Cell V min
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_v_max
+      name: Cell V max
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_v_delta
+      name: Cell V Δ
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_temp_1
+      name: Cell T1
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_temp_2
+      name: Cell T2
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_temp_3
+      name: Cell T3
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_cell_temp_4
+      name: Cell T4
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_env_temp
+      name: Env T
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack02_pcb_temp
+      name: PCB T
+  - type: entities
+    title: Pack 3
+    icon: mdi:battery-alert
+    state_color: true
+    entities:
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_soc
+      name: SoC
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_voltage
+      name: Voltaje
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_current
+      name: Corriente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_soh
+      name: SoH
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cycles
+      name: Ciclos
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_remaining_ah
+      name: Remanente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_nominal_ah
+      name: Nominal
+    - type: section
+      label: Celdas y temperatura
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_v_min
+      name: Cell V min
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_v_max
+      name: Cell V max
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_v_delta
+      name: Cell V Δ
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_temp_1
+      name: Cell T1
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_temp_2
+      name: Cell T2
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_temp_3
+      name: Cell T3
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_cell_temp_4
+      name: Cell T4
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_env_temp
+      name: Env T
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack03_pcb_temp
+      name: PCB T
+  - type: entities
+    title: Pack 4
+    icon: mdi:battery
+    state_color: true
+    entities:
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_soc
+      name: SoC
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_voltage
+      name: Voltaje
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_current
+      name: Corriente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_soh
+      name: SoH
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cycles
+      name: Ciclos
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_remaining_ah
+      name: Remanente
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_nominal_ah
+      name: Nominal
+    - type: section
+      label: Celdas y temperatura
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_v_min
+      name: Cell V min
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_v_max
+      name: Cell V max
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_v_delta
+      name: Cell V Δ
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_temp_1
+      name: Cell T1
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_temp_2
+      name: Cell T2
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_temp_3
+      name: Cell T3
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_cell_temp_4
+      name: Cell T4
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_env_temp
+      name: Env T
+    - entity: sensor.panel_cuartoelectrico_bluesun_pack04_pcb_temp
+      name: PCB T
+- type: vertical-stack
+  cards:
+  - type: custom:mini-graph-card
+    name: Potencia del banco (últimas 6 h)
+    icon: mdi:home-battery
+    hours_to_show: 6
+    points_per_hour: 60
+    entities:
+    - sensor.panel_cuartoelectrico_bluesun_bank_power
+    show:
+      labels: true
+      name: true
+      icon: true
+  - type: history-graph
+    title: SoC por pack (últimas 24 h)
+    hours_to_show: 24
+    entities:
+    - sensor.panel_cuartoelectrico_bluesun_pack01_soc
+    - sensor.panel_cuartoelectrico_bluesun_pack02_soc
+    - sensor.panel_cuartoelectrico_bluesun_pack03_soc
+    - sensor.panel_cuartoelectrico_bluesun_pack04_soc
+  - type: history-graph
+    title: Voltaje por pack (últimas 2 h)
+    hours_to_show: 2
+    entities:
+    - sensor.panel_cuartoelectrico_bluesun_pack01_voltage
+    - sensor.panel_cuartoelectrico_bluesun_pack02_voltage
+    - sensor.panel_cuartoelectrico_bluesun_pack03_voltage
+    - sensor.panel_cuartoelectrico_bluesun_pack04_voltage
+  - type: history-graph
+    title: Corriente por pack (últimas 2 h)
+    hours_to_show: 2
+    entities:
+    - sensor.panel_cuartoelectrico_bluesun_pack01_current
+    - sensor.panel_cuartoelectrico_bluesun_pack02_current
+    - sensor.panel_cuartoelectrico_bluesun_pack03_current
+    - sensor.panel_cuartoelectrico_bluesun_pack04_current
+  - type: history-graph
+    title: Cell V min por pack (últimas 12 h)
+    hours_to_show: 12
+    entities:
+    - sensor.panel_cuartoelectrico_bluesun_pack01_cell_v_min
+    - sensor.panel_cuartoelectrico_bluesun_pack02_cell_v_min
+    - sensor.panel_cuartoelectrico_bluesun_pack03_cell_v_min
+    - sensor.panel_cuartoelectrico_bluesun_pack04_cell_v_min
+  - type: horizontal-stack
+    cards:
+    - type: statistic
+      entity: sensor.panel_cuartoelectrico_bluesun_bank_power
+      period:
+        calendar:
+          period: day
+      stat_type: mean
+      name: Hoy potencia promedio
+    - type: statistic
+      entity: sensor.panel_cuartoelectrico_bluesun_bank_current_total
+      period:
+        calendar:
+          period: day
+      stat_type: mean
+      name: Hoy corriente promedio
+- type: entities
+  title: Controles
+  entities:
+  - type: section
+    label: Polling runtime (datos críticos — cmd 0x10)
+  - entity: number.panel_cuartoelectrico_bluesun_poll_fast_cmd_0x10
+    name: Ciclo fast (s) — current/voltage/SoC
+    secondary_info: last-changed
+  - type: section
+    label: Polling diagnóstico (cells + temps — cmd 0x11)
+  - entity: number.panel_cuartoelectrico_bluesun_poll_slow_cmd_0x11
+    name: Ciclo slow (s) — cells + temps
+    secondary_info: last-changed
+  - type: section
+    label: Diagnóstico y recovery
+  - entity: sensor.panel_cuartoelectrico_bluesun_octopus_parses_ok
+    name: Parses OK
+    secondary_info: last-changed
