@@ -28,3 +28,6 @@ _scratch/
 
 # Visual brainstorming companion
 .superpowers/
+
+# Local working copy of the deployed (non-sanitized) firmware — never commit
+.work/

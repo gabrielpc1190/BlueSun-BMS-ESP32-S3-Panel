@@ -25,6 +25,23 @@ Read your **BlueSun lithium battery bank in real time** from any ESPHome-based H
 
 ---
 
+## Two firmware variants
+
+This repo ships **two** firmwares for the same panel and the same LVGL UI:
+
+| Firmware | Role | Reads the BMS over BLE? |
+|---|---|---|
+| [`firmware/bluesun-bms-panel.yaml`](firmware/bluesun-bms-panel.yaml) | **BLE proxy** — the panel is the BMS reader and the source of the 86 HA sensors. | Yes |
+| [`firmware/panel-display-only-v2.yaml`](firmware/panel-display-only-v2.yaml) | **Display-only** — the panel is a thin client that renders `sensor.bluesun_*` entities fed by an external BLE reader (e.g. an Orange Pi) through Home Assistant. | No |
+
+Use the **BLE-proxy** firmware if the panel is your only/primary BMS reader. Use
+**display-only** if something else already owns the single Octopus BLE slot and publishes
+the bank to Home Assistant. The deployed unit in our off-grid build runs display-only.
+See [`docs/06-display-only-architecture.md`](docs/06-display-only-architecture.md) for the
+data flow, the entity contract, and how the two relate.
+
+---
+
 ## Hardware
 
 | Component | Tested model | Notes |

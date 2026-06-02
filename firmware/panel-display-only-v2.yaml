@@ -1,0 +1,1080 @@
+# panel-display-only-v2.yaml
+# =====================================
+# Firmware Phase B del Panel S3 — variante display-only ("thin client").
+#
+# El panel NO hace BLE: las 3 vistas LVGL (Bank / Packs / Cells) solo consumen
+# las entidades sensor.bluesun_* que un daemon externo (corriendo en una Orange
+# Pi) publica a Home Assistant via MQTT discovery. El panel se suscribe a esas
+# entidades con `platform: homeassistant` y renderea.
+#
+#   v1 (Phase A, BLE killed)   → sensores `platform: template` sin lambda,
+#                                LVGL con valores mock (78% SoC).
+#   v2 (Phase B, HA-fed, este) → sensores `platform: homeassistant`,
+#                                LVGL renderea datos reales desde HA.
+#
+# Si HA o el daemon se caen, los sensores entran en `unavailable` y el display
+# muestra "--" en lugar de NaN (ver lambdas LVGL defensivas).
+
+substitutions:
+  name: "panel-s3-step5-ui"            # se mantiene por compatibilidad: preserva el device_id en HA
+  friendly_name: "Panel S3 Step5 UI"
+  # firmware revision tag (no afecta HA pero queda en logs/version)
+  fw_variant: "display-only-v2-hafed"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: "gabrielpc1190.panel-s3-phase-b"
+    version: "${fw_variant}"
+  min_version: 2026.4.0
+  on_boot:
+    priority: -100  # tras WiFi+API listos
+    then:
+      - lambda: |-
+          // Publicar serials hardcoded a los text_sensors al boot.
+          // Si en el futuro se agrega lectura dinámica via cmd 0x17 (solo Pack 1
+          // funciona), el rsp 0x66 sobreescribirá esto por el valor real.
+          id(pack01_serial_ts).publish_state(id(pack01_serial_str));
+          id(pack02_serial_ts).publish_state(id(pack02_serial_str));
+          id(pack03_serial_ts).publish_state(id(pack03_serial_str));
+          id(pack04_serial_ts).publish_state(id(pack04_serial_str));
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      # Imprescindible cuando el touch I2C usa GPIO19 (default ESP-IDF lo agarra para
+      # USB-Serial-JTAG silenciosamente y rompe el touch).
+      CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG: n
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  baud_rate: 115200
+  level: INFO
+  hardware_uart: UART0
+  logs:
+    component: ERROR
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  # API actions con string/int[] tipos no compilan en ESPHome 2026.4.5 (linker
+  # error: get_execute_arg_value<vector<long>> sin instantiate). Workaround:
+  # 3 number + 1 button para el fuzzer Python — set values via REST + press button.
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: !secret panel_static_ip
+    gateway: !secret panel_gateway
+    subnet: 255.255.255.0
+  fast_connect: true
+  ap:
+    ssid: "Panel-S3-Step5 Hotspot"
+    password: !secret fallback_ap_password
+
+# === Backlight PWM (GPIO38) ===
+output:
+  - platform: ledc
+    pin: GPIO38
+    id: backlight_pwm
+    frequency: 5000Hz
+
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    name: "Panel Backlight"
+    id: panel_backlight
+    restore_mode: ALWAYS_ON
+    default_transition_length: 200ms
+
+# === Display ST7701S init via SPI sideband + RGB-565 16-bit @ 12 MHz ===
+spi:
+  - id: lcd_init_spi
+    clk_pin: GPIO48
+    mosi_pin: GPIO47
+    interface: software
+
+display:
+  - platform: st7701s
+    id: panel_display
+    spi_id: lcd_init_spi
+    cs_pin: GPIO39
+    de_pin: GPIO18
+    hsync_pin: GPIO16
+    vsync_pin: GPIO17
+    pclk_pin: GPIO21
+    # PCLK 10 MHz (bajado de 12 MHz el 2026-05-08): da ~20% mas margen
+    # al bounce buffer hardcoded del driver (480x10 px = 9600 B) para que
+    # se rellene desde PSRAM antes de underrunear cuando BLE bursteea.
+    # Fix barras verticales oscuras intermitentes. ESPHome no expone
+    # bounce_buffer_size en el schema st7701s, por eso se ataca por PCLK.
+    pclk_frequency: 10MHz
+    data_pins:
+      red:    [GPIO11, GPIO12, GPIO13, GPIO14, GPIO0]
+      green:  [GPIO8, GPIO20, GPIO3, GPIO46, GPIO9, GPIO10]
+      blue:   [GPIO4, GPIO5, GPIO6, GPIO7, GPIO15]
+    dimensions:
+      width: 480
+      height: 480
+    hsync_back_porch: 10
+    hsync_front_porch: 50
+    hsync_pulse_width: 8
+    vsync_back_porch: 10
+    vsync_front_porch: 20
+    vsync_pulse_width: 8
+    update_interval: never       # sin LVGL todavia
+    auto_clear_enabled: false
+
+# === Touch GT911 (I2C @ 0x5D) ===
+i2c:
+  - id: bus_touch
+    sda: GPIO19
+    scl:
+      number: GPIO45
+      ignore_strapping_warning: true
+    scan: true
+    frequency: 100kHz
+
+touchscreen:
+  - platform: gt911
+    id: panel_touch
+    i2c_id: bus_touch
+    display: panel_display
+    transform:
+      mirror_x: false
+      mirror_y: false
+      swap_xy: false
+
+# === Fonts (Montserrat) — bpp:1 pixel-perfect, sin halo ===
+font:
+  - file: "gfonts://Montserrat@700"
+    id: font_xl
+    size: 96
+    bpp: 1
+    glyphs: "0123456789%-."
+  - file: "gfonts://Montserrat@700"
+    id: font_lg
+    size: 48
+    bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_md
+    size: 28
+    bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_sm
+    size: 20
+    bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_xs
+    size: 14
+    bpp: 1
+    glyphs: "0123456789+-. AW%"
+
+# === Reloj HA ===
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: "America/El_Salvador"
+    on_time:
+      - seconds: 0
+        then:
+          - lvgl.label.update:
+              id: lbl_clock
+              text: !lambda |-
+                auto t = id(ha_time).now();
+                return str_sprintf("%02d:%02d", t.hour, t.minute);
+
+# === LVGL — 3 vistas: Banco / Packs / Celdas ===
+lvgl:
+  displays:
+    - panel_display
+  touchscreens:
+    - panel_touch
+  buffer_size: 12%
+  rotation: 270
+  log_level: WARN
+  theme:
+    obj:
+      bg_color: 0x000000
+      text_color: 0xFFFFFF
+      border_width: 0
+  pages:
+    - id: home_page
+      bg_color: 0x000000
+      on_swipe_left:
+        - lvgl.page.show: packs_page
+      widgets:
+        - label:
+            id: lbl_clock
+            text: "00:00"
+            text_font: font_md
+            text_color: 0xFFFFFF
+            align: TOP_RIGHT
+            x: -15
+            y: 10
+        - label:
+            id: lbl_mode_badge
+            text: ""
+            text_font: font_sm
+            text_color: 0xFFD700
+            align: TOP_LEFT
+            x: 10
+            y: 10
+        - label:
+            id: lbl_soc_big
+            text: "--%"
+            text_font: font_xl
+            text_color: 0x43A047
+            align: TOP_MID
+            y: 60
+        - label:
+            # Linea derivada del banco: potencia + autonomia + energia disponible.
+            # Se actualiza desde el on_value de bank_power.
+            id: lbl_bank_info
+            text: ""
+            text_font: font_sm
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 165
+        - bar:
+            id: bar_soc
+            min_value: 0
+            max_value: 100
+            value: 0
+            x: 40
+            y: 200
+            width: 400
+            height: 20
+            indicator:
+              bg_color: 0x43A047
+        - label:
+            id: lbl_vip
+            text: "-- V    -- A    -- W"
+            text_font: font_md
+            text_color: 0xFFFFFF
+            align: TOP_MID
+            y: 240
+        - label: { id: lbl_pack1, text: "P1 --%", text_font: font_sm, x: 30,  y: 320 }
+        - bar:
+            id: bar_pack1
+            x: 30
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pack2, text: "P2 --%", text_font: font_sm, x: 140, y: 320 }
+        - bar:
+            id: bar_pack2
+            x: 140
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pack3, text: "P3 --%", text_font: font_sm, x: 250, y: 320 }
+        - bar:
+            id: bar_pack3
+            x: 250
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pack4, text: "P4 --%", text_font: font_sm, x: 360, y: 320 }
+        - bar:
+            id: bar_pack4
+            x: 360
+            y: 350
+            width: 90
+            height: 16
+            min_value: 0
+            max_value: 100
+            value: 0
+            indicator: { bg_color: 0x43A047 }
+        # Linea de potencia por pack (corriente + W con signo), debajo de cada barra.
+        # Se actualizan desde el on_value de cada pack0X_current.
+        - label: { id: lbl_pwr1, text: "", text_font: font_xs, x: 30,  y: 370 }
+        - label: { id: lbl_pwr2, text: "", text_font: font_xs, x: 140, y: 370 }
+        - label: { id: lbl_pwr3, text: "", text_font: font_xs, x: 250, y: 370 }
+        - label: { id: lbl_pwr4, text: "", text_font: font_xs, x: 360, y: 370 }
+        - label:
+            id: lbl_statusbar
+            text: "Banco *.."
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+    # === Vista 2 — Packs (grid 2x2) ===
+    - id: packs_page
+      bg_color: 0x000000
+      on_swipe_left:
+        - lvgl.page.show: cells_page
+      on_swipe_right:
+        - lvgl.page.show: home_page
+      widgets:
+        - label:
+            text: "PACKS"
+            text_font: font_md
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 10
+        - obj:
+            id: card_pack1
+            x: 20
+            y: 55
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 1;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 1" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { id: lbl_p1_title, text: "Pack 1", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p1_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p1_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p1_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p1_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p1_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p1_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p1_cycles, text: "C --", text_font: font_sm, x: 110, y: 150 }
+        - obj:
+            id: card_pack2
+            x: 245
+            y: 55
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 2;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 2" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { id: lbl_p2_title, text: "Pack 2", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p2_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p2_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p2_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p2_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p2_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p2_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p2_cycles, text: "C --", text_font: font_sm, x: 110, y: 150 }
+        - obj:
+            id: card_pack3
+            x: 20
+            y: 265
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 3;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 3" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { id: lbl_p3_title, text: "Pack 3", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p3_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p3_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p3_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p3_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p3_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p3_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p3_cycles, text: "C --", text_font: font_sm, x: 110, y: 150 }
+        - obj:
+            id: card_pack4
+            x: 245
+            y: 265
+            width: 215
+            height: 200
+            bg_color: 0x1E1E1E
+            border_color: 0x2E3338
+            border_width: 1
+            radius: 8
+            on_short_click:
+              - lambda: 'id(selected_pack) = 4;'
+              - lvgl.label.update: { id: lbl_cells_title, text: "CELDAS - Pack 4" }
+              - lvgl.page.show: cells_page
+            widgets:
+              - label: { id: lbl_p4_title, text: "Pack 4", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
+              - label: { id: lbl_p4_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
+              - label: { id: lbl_p4_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
+              - label: { id: lbl_p4_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
+              - label: { id: lbl_p4_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
+              - label: { id: lbl_p4_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
+              - label: { id: lbl_p4_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p4_cycles, text: "C --", text_font: font_sm, x: 110, y: 150 }
+        - label:
+            text: "Banco .*."
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+    # === Vista 3 — Celdas (drill-down) ===
+    - id: cells_page
+      bg_color: 0x000000
+      on_swipe_right:
+        - lvgl.page.show: packs_page
+      widgets:
+        - label:
+            id: lbl_cells_title
+            text: "CELDAS - Pack X"
+            text_font: font_md
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 10
+        - label:
+            id: lbl_cells_v
+            text: "Vmin --  Vmax --  Vavg --  d -- mV"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 90
+        - label:
+            id: lbl_cells_t
+            text: "T1 --  T2 --  T3 --  T4 --"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 150
+        - label:
+            id: lbl_cells_env
+            text: "PCB --   ENV --"
+            text_font: font_sm
+            text_color: 0xFFFFFF
+            x: 20
+            y: 210
+        - label:
+            id: lbl_cells_serial
+            text: "SN: --"
+            text_font: font_sm
+            text_color: 0xB0BEC5
+            x: 20
+            y: 260
+        - label:
+            id: lbl_cells_hint
+            text: "(swipe -> volver a Packs)"
+            text_font: font_sm
+            text_color: 0x666666
+            align: BOTTOM_MID
+            y: -40
+        - label:
+            text: "Banco ..*"
+            text_font: font_sm
+            text_color: 0x6E7B82
+            align: BOTTOM_MID
+            y: -10
+
+# === Globals ===
+globals:
+  - id: selected_pack
+    type: int
+    initial_value: '1'
+  # Pack warning flags — evaluadas en interval cada 5s en base a SoH/cycles/Ah_rem_vs_nom.
+  # Si true, los labels críticos (título + cycles + SoH + delta) se pintan ámbar 0xFFA726.
+  - { id: p1_warning, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: p2_warning, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: p3_warning, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: p4_warning, type: bool, restore_value: no, initial_value: 'false' }
+  # Serial numbers per-pack: hardcoded a mano según las etiquetas físicas de cada pack.
+  # El protocolo es Modbus-RTU de Seplos v3 — el read 0x17 solo responde para Pack 1
+  # (master), retornando algo como "14<your-serial>", porque VIA contiene solo info
+  # del banco como conjunto; packs 2-4 se leen de la etiqueta física + app Octopus.
+  # Si se reemplaza algún pack, editar la initial_value y reflashear.
+  - { id: pack01_serial_str, type: std::string, restore_value: no, initial_value: '"BN0000000000XX"' }
+  - { id: pack02_serial_str, type: std::string, restore_value: no, initial_value: '"BN0000000000XX"' }
+  - { id: pack03_serial_str, type: std::string, restore_value: no, initial_value: '"BN0000000000XX"' }
+  - { id: pack04_serial_str, type: std::string, restore_value: no, initial_value: '"BN0000000000XX"' }
+
+# === Sensores: HA-fed bank aggregates (Phase B) ===
+sensor:
+  # === HA-fed BANK aggregates — vienen del daemon externo (OPi) via MQTT ===
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_soc_avg
+    id: bank_soc_avg
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_soc_big
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+          text_color: !lambda |-
+            if (x > 50.0)      return lv_color_hex(0x43A047);
+            else if (x > 25.0) return lv_color_hex(0xFFA726);
+            else               return lv_color_hex(0xEF5350);
+      - lvgl.bar.update:
+          id: bar_soc
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_voltage_avg
+    id: bank_voltage_avg
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_current_total
+    id: bank_current_total
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_power
+    id: bank_power
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_vip
+          text: !lambda |-
+            float v = id(bank_voltage_avg).has_state() ? id(bank_voltage_avg).state : 0.0f;
+            float i = id(bank_current_total).has_state() ? id(bank_current_total).state : 0.0f;
+            return str_sprintf("%.1f V    %.1f A    %.0f W", v, i, x);
+      # Badge de estado del banco (arriba-izq). signo: + = carga
+      - lvgl.label.update:
+          id: lbl_mode_badge
+          text: !lambda |-
+            float i = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            if (isnan(i))   return std::string("");
+            if (i >= 0.5f)  return std::string("CARGANDO");
+            if (i <= -0.5f) return std::string("DESCARGANDO");
+            return std::string("REPOSO");
+          text_color: !lambda |-
+            float i = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+      # Linea derivada: kW | tiempo a lleno/vacio | kWh disponibles
+      - lvgl.label.update:
+          id: lbl_bank_info
+          text: !lambda |-
+            float i   = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            float p   = x;  // bank_power
+            float v   = id(bank_voltage_avg).has_state()  ? id(bank_voltage_avg).state  : NAN;
+            float rem = id(bank_remaining_ah).has_state() ? id(bank_remaining_ah).state : NAN;
+            float nom = id(bank_nominal_ah).has_state()   ? id(bank_nominal_ah).state   : NAN;
+            std::string s = isnan(p) ? std::string("-- kW") : str_sprintf("%.1f kW", fabsf(p) / 1000.0f);
+            // Autonomia: solo con corriente significativa y resultado razonable (0..100 h)
+            if (!isnan(i) && i >= 0.5f && !isnan(nom) && !isnan(rem)) {
+              float h = (nom - rem) / i;
+              if (h > 0.0f && h < 100.0f) s += str_sprintf("   %.1f h a lleno", h);
+            } else if (!isnan(i) && i <= -0.5f && !isnan(rem)) {
+              float h = rem / (-i);
+              if (h > 0.0f && h < 100.0f) s += str_sprintf("   %.1f h a vacio", h);
+            }
+            if (!isnan(rem) && !isnan(v)) s += str_sprintf("   %.0f kWh", rem * v / 1000.0f);
+            return s;
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_soc_spread
+    id: bank_soc_spread
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_remaining_ah
+    id: bank_remaining_ah
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_nominal_ah
+    id: bank_nominal_ah
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_min_soh
+    id: bank_min_soh
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_max_cycles
+    id: bank_max_cycles
+    internal: false
+
+  - platform: homeassistant
+    entity_id: sensor.bluesun_bank_max_cell_temp
+    id: bank_max_cell_temp
+    internal: false
+
+  # === Pack 01 — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_voltage,      id: pack01_voltage,      internal: false }
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack01_current
+    id: pack01_current
+    internal: false
+    on_value:
+      # Linea de potencia P1 en el home. Potencia = V*I inline. signo: + = carga
+      - lvgl.label.update:
+          id: lbl_pwr1
+          text: !lambda |-
+            float i = x;
+            std::string s = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack01_voltage).has_state()) {
+              float w = id(pack01_voltage).state * i;
+              s += str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            } else { s += " --"; }
+            return s;
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack01_soc
+    id: pack01_soc
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack1
+          text: !lambda 'return str_sprintf("P1 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack1
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p1_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_soh,          id: pack01_soh,          internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cycles,       id: pack01_cycles,       internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_remaining_ah, id: pack01_remaining_ah, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_nominal_ah,   id: pack01_nominal_ah,   internal: false }
+
+  # === Pack 02 — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_voltage,      id: pack02_voltage,      internal: false }
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack02_current
+    id: pack02_current
+    internal: false
+    on_value:
+      # Linea de potencia P2 en el home. Potencia = V*I inline. signo: + = carga
+      - lvgl.label.update:
+          id: lbl_pwr2
+          text: !lambda |-
+            float i = x;
+            std::string s = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack02_voltage).has_state()) {
+              float w = id(pack02_voltage).state * i;
+              s += str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            } else { s += " --"; }
+            return s;
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack02_soc
+    id: pack02_soc
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack2
+          text: !lambda 'return str_sprintf("P2 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack2
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p2_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_soh,          id: pack02_soh,          internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cycles,       id: pack02_cycles,       internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_remaining_ah, id: pack02_remaining_ah, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_nominal_ah,   id: pack02_nominal_ah,   internal: false }
+
+  # === Pack 03 — HA-fed ===
+  # NOTE: Pack03 has Ah_nominal ~274.4 Ah (vs 280 Ah on P1/P2/P4) — hardware outlier.
+  # lbl_pack3 carries a STATIC amber text_color (always orange) to flag it as non-standard.
+  # bar_pack3 intentionally omits the indicator bg_color (no SoC-driven color on the bar).
+  # This matches v1 mock_pack3_soc behavior. The interval warning system (p3_warning)
+  # also writes lbl_pack3 text_color — that's expected and consistent with v1.
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_voltage,      id: pack03_voltage,      internal: false }
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack03_current
+    id: pack03_current
+    internal: false
+    on_value:
+      # Linea de potencia P3 en el home. Potencia = V*I inline. signo: + = carga
+      - lvgl.label.update:
+          id: lbl_pwr3
+          text: !lambda |-
+            float i = x;
+            std::string s = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack03_voltage).has_state()) {
+              float w = id(pack03_voltage).state * i;
+              s += str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            } else { s += " --"; }
+            return s;
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack03_soc
+    id: pack03_soc
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack3
+          text: !lambda 'return str_sprintf("P3 %.0f%%", x);'
+          text_color: 0xFFA726
+      - lvgl.bar.update:
+          id: bar_pack3
+          value: !lambda 'return (int)x;'
+      - lvgl.label.update:
+          id: lbl_p3_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_soh,          id: pack03_soh,          internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cycles,       id: pack03_cycles,       internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_remaining_ah, id: pack03_remaining_ah, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_nominal_ah,   id: pack03_nominal_ah,   internal: false }
+
+  # === Pack 04 — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_voltage,      id: pack04_voltage,      internal: false }
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack04_current
+    id: pack04_current
+    internal: false
+    on_value:
+      # Linea de potencia P4 en el home. Potencia = V*I inline. signo: + = carga
+      - lvgl.label.update:
+          id: lbl_pwr4
+          text: !lambda |-
+            float i = x;
+            std::string s = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack04_voltage).has_state()) {
+              float w = id(pack04_voltage).state * i;
+              s += str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            } else { s += " --"; }
+            return s;
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+  - platform: homeassistant
+    entity_id: sensor.bluesun_pack04_soc
+    id: pack04_soc
+    internal: false
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pack4
+          text: !lambda 'return str_sprintf("P4 %.0f%%", x);'
+      - lvgl.bar.update:
+          id: bar_pack4
+          value: !lambda 'return (int)x;'
+          indicator:
+            bg_color: !lambda |-
+              if (x > 50.0)      return lv_color_hex(0x43A047);
+              else if (x > 25.0) return lv_color_hex(0xFFA726);
+              else               return lv_color_hex(0xEF5350);
+      - lvgl.label.update:
+          id: lbl_p4_soc
+          text: !lambda 'return str_sprintf("%.0f%%", x);'
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_soh,          id: pack04_soh,          internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cycles,       id: pack04_cycles,       internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_remaining_ah, id: pack04_remaining_ah, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_nominal_ah,   id: pack04_nominal_ah,   internal: false }
+
+  # === Pack 01 cells + temps — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_v_min,   id: pack01_cell_v_min,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_v_max,   id: pack01_cell_v_max,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_v_avg,   id: pack01_cell_v_avg,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_v_delta, id: pack01_cell_v_delta, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_temp_1,  id: pack01_cell_temp_1,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_temp_2,  id: pack01_cell_temp_2,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_temp_3,  id: pack01_cell_temp_3,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_cell_temp_4,  id: pack01_cell_temp_4,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_env_temp,     id: pack01_env_temp,     internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack01_pcb_temp,     id: pack01_pcb_temp,     internal: false }
+
+  # === Pack 02 cells + temps — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_v_min,   id: pack02_cell_v_min,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_v_max,   id: pack02_cell_v_max,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_v_avg,   id: pack02_cell_v_avg,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_v_delta, id: pack02_cell_v_delta, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_temp_1,  id: pack02_cell_temp_1,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_temp_2,  id: pack02_cell_temp_2,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_temp_3,  id: pack02_cell_temp_3,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_cell_temp_4,  id: pack02_cell_temp_4,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_env_temp,     id: pack02_env_temp,     internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack02_pcb_temp,     id: pack02_pcb_temp,     internal: false }
+
+  # === Pack 03 cells + temps — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_v_min,   id: pack03_cell_v_min,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_v_max,   id: pack03_cell_v_max,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_v_avg,   id: pack03_cell_v_avg,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_v_delta, id: pack03_cell_v_delta, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_temp_1,  id: pack03_cell_temp_1,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_temp_2,  id: pack03_cell_temp_2,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_temp_3,  id: pack03_cell_temp_3,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_cell_temp_4,  id: pack03_cell_temp_4,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_env_temp,     id: pack03_env_temp,     internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack03_pcb_temp,     id: pack03_pcb_temp,     internal: false }
+
+  # === Pack 04 cells + temps — HA-fed ===
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_v_min,   id: pack04_cell_v_min,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_v_max,   id: pack04_cell_v_max,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_v_avg,   id: pack04_cell_v_avg,   internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_v_delta, id: pack04_cell_v_delta, internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_temp_1,  id: pack04_cell_temp_1,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_temp_2,  id: pack04_cell_temp_2,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_temp_3,  id: pack04_cell_temp_3,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_cell_temp_4,  id: pack04_cell_temp_4,  internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_env_temp,     id: pack04_env_temp,     internal: false }
+  - { platform: homeassistant, entity_id: sensor.bluesun_pack04_pcb_temp,     id: pack04_pcb_temp,     internal: false }
+
+# === Text sensors: serials per-pack ===
+# Hardcoded en globals (ver §Globals). Publicados a HA via on_boot lambda
+# en la sección esphome:. La app Octopus no consulta serial per-pack via
+# BLE (validado HCI); leemos del label físico al instalar.
+text_sensor:
+  - { platform: template, id: pack01_serial_ts, name: "BlueSun Pack01 Serial", icon: "mdi:identifier" }
+  - { platform: template, id: pack02_serial_ts, name: "BlueSun Pack02 Serial", icon: "mdi:identifier" }
+  - { platform: template, id: pack03_serial_ts, name: "BlueSun Pack03 Serial", icon: "mdi:identifier" }
+  - { platform: template, id: pack04_serial_ts, name: "BlueSun Pack04 Serial", icon: "mdi:identifier" }
+
+# === Update labels Packs cards + Cells page cada 5s ===
+interval:
+  - interval: 5s
+    then:
+      - lvgl.label.update: { id: lbl_p1_v, text: !lambda 'return id(pack01_voltage).has_state() ? str_sprintf("%.1f V", id(pack01_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update:
+          id: lbl_p1_i
+          text: !lambda |-
+            if (!id(pack01_current).has_state()) return std::string("-- A");
+            float i = id(pack01_current).state;
+            std::string s = str_sprintf("%.1f A", i);
+            if (id(pack01_voltage).has_state()) s += str_sprintf("  %.0f W", id(pack01_voltage).state * i);
+            return s;
+          text_color: !lambda |-
+            float i = id(pack01_current).has_state() ? id(pack01_current).state : 0.0f;  // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0xFFFFFF);
+      - lvgl.label.update: { id: lbl_p1_t, text: !lambda 'return id(pack01_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack01_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p1_d, text: !lambda 'return id(pack01_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack01_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p1_soh, text: !lambda 'return id(pack01_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack01_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p1_cycles, text: !lambda 'return id(pack01_cycles).has_state() ? str_sprintf("C %.0f", id(pack01_cycles).state) : std::string("C --");' }
+      - lvgl.label.update: { id: lbl_p2_v, text: !lambda 'return id(pack02_voltage).has_state() ? str_sprintf("%.1f V", id(pack02_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update:
+          id: lbl_p2_i
+          text: !lambda |-
+            if (!id(pack02_current).has_state()) return std::string("-- A");
+            float i = id(pack02_current).state;
+            std::string s = str_sprintf("%.1f A", i);
+            if (id(pack02_voltage).has_state()) s += str_sprintf("  %.0f W", id(pack02_voltage).state * i);
+            return s;
+          text_color: !lambda |-
+            float i = id(pack02_current).has_state() ? id(pack02_current).state : 0.0f;  // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0xFFFFFF);
+      - lvgl.label.update: { id: lbl_p2_t, text: !lambda 'return id(pack02_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack02_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p2_d, text: !lambda 'return id(pack02_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack02_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p2_soh, text: !lambda 'return id(pack02_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack02_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p2_cycles, text: !lambda 'return id(pack02_cycles).has_state() ? str_sprintf("C %.0f", id(pack02_cycles).state) : std::string("C --");' }
+      - lvgl.label.update: { id: lbl_p3_v, text: !lambda 'return id(pack03_voltage).has_state() ? str_sprintf("%.1f V", id(pack03_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update:
+          id: lbl_p3_i
+          text: !lambda |-
+            if (!id(pack03_current).has_state()) return std::string("-- A");
+            float i = id(pack03_current).state;
+            std::string s = str_sprintf("%.1f A", i);
+            if (id(pack03_voltage).has_state()) s += str_sprintf("  %.0f W", id(pack03_voltage).state * i);
+            return s;
+          text_color: !lambda |-
+            float i = id(pack03_current).has_state() ? id(pack03_current).state : 0.0f;  // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0xFFFFFF);
+      - lvgl.label.update: { id: lbl_p3_t, text: !lambda 'return id(pack03_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack03_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p3_d, text: !lambda 'return id(pack03_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack03_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p3_soh, text: !lambda 'return id(pack03_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack03_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p3_cycles, text: !lambda 'return id(pack03_cycles).has_state() ? str_sprintf("C %.0f", id(pack03_cycles).state) : std::string("C --");' }
+      - lvgl.label.update: { id: lbl_p4_v, text: !lambda 'return id(pack04_voltage).has_state() ? str_sprintf("%.1f V", id(pack04_voltage).state) : std::string("-- V");' }
+      - lvgl.label.update:
+          id: lbl_p4_i
+          text: !lambda |-
+            if (!id(pack04_current).has_state()) return std::string("-- A");
+            float i = id(pack04_current).state;
+            std::string s = str_sprintf("%.1f A", i);
+            if (id(pack04_voltage).has_state()) s += str_sprintf("  %.0f W", id(pack04_voltage).state * i);
+            return s;
+          text_color: !lambda |-
+            float i = id(pack04_current).has_state() ? id(pack04_current).state : 0.0f;  // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0xFFFFFF);
+      - lvgl.label.update: { id: lbl_p4_t, text: !lambda 'return id(pack04_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack04_cell_temp_1).state) : std::string("T -- C");' }
+      - lvgl.label.update: { id: lbl_p4_d, text: !lambda 'return id(pack04_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack04_cell_v_delta).state) : std::string("d -- mV");' }
+      - lvgl.label.update: { id: lbl_p4_soh, text: !lambda 'return id(pack04_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack04_soh).state) : std::string("SoH --%");' }
+      - lvgl.label.update: { id: lbl_p4_cycles, text: !lambda 'return id(pack04_cycles).has_state() ? str_sprintf("C %.0f", id(pack04_cycles).state) : std::string("C --");' }
+      # === Evaluar warning flags por pack (SoH<95 OR cycles_delta>50 OR Ah_rem/nom<90%) ===
+      - lambda: |-
+          float c_min = 1e9f;
+          for (auto *s : {id(pack01_cycles),id(pack02_cycles),id(pack03_cycles),id(pack04_cycles)}) {
+            if (s->has_state() && s->state < c_min) c_min = s->state;
+          }
+          auto eval = [c_min](esphome::sensor::Sensor *soh, esphome::sensor::Sensor *cyc,
+                              esphome::sensor::Sensor *rem, esphome::sensor::Sensor *nom) -> bool {
+            if (soh->has_state() && soh->state < 95.0f) return true;
+            if (cyc->has_state() && c_min < 1e8f && (cyc->state - c_min) > 50.0f) return true;
+            if (rem->has_state() && nom->has_state() && nom->state > 0.1f
+                && (1.0f - rem->state/nom->state) > 0.10f) return true;
+            return false;
+          };
+          id(p1_warning) = eval(id(pack01_soh), id(pack01_cycles), id(pack01_remaining_ah), id(pack01_nominal_ah));
+          id(p2_warning) = eval(id(pack02_soh), id(pack02_cycles), id(pack02_remaining_ah), id(pack02_nominal_ah));
+          id(p3_warning) = eval(id(pack03_soh), id(pack03_cycles), id(pack03_remaining_ah), id(pack03_nominal_ah));
+          id(p4_warning) = eval(id(pack04_soh), id(pack04_cycles), id(pack04_remaining_ah), id(pack04_nominal_ah));
+      # === Aplicar color condicional: ámbar si warning, gris/blanco default ===
+      - if:
+          condition: { lambda: 'return id(p1_warning);' }
+          then:
+            - lvgl.widget.update: { id: lbl_p1_title,  text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p1_cycles, text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p1_soh,    text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p1_d,      text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_pack1,     text_color: 0xFFA726 }
+          else:
+            - lvgl.widget.update: { id: lbl_p1_title,  text_color: 0xB0BEC5 }
+            - lvgl.widget.update: { id: lbl_p1_cycles, text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p1_soh,    text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p1_d,      text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_pack1,     text_color: 0xFFFFFF }
+      - if:
+          condition: { lambda: 'return id(p2_warning);' }
+          then:
+            - lvgl.widget.update: { id: lbl_p2_title,  text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p2_cycles, text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p2_soh,    text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p2_d,      text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_pack2,     text_color: 0xFFA726 }
+          else:
+            - lvgl.widget.update: { id: lbl_p2_title,  text_color: 0xB0BEC5 }
+            - lvgl.widget.update: { id: lbl_p2_cycles, text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p2_soh,    text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p2_d,      text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_pack2,     text_color: 0xFFFFFF }
+      - if:
+          condition: { lambda: 'return id(p3_warning);' }
+          then:
+            - lvgl.widget.update: { id: lbl_p3_title,  text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p3_cycles, text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p3_soh,    text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p3_d,      text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_pack3,     text_color: 0xFFA726 }
+          else:
+            - lvgl.widget.update: { id: lbl_p3_title,  text_color: 0xB0BEC5 }
+            - lvgl.widget.update: { id: lbl_p3_cycles, text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p3_soh,    text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p3_d,      text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_pack3,     text_color: 0xFFFFFF }
+      - if:
+          condition: { lambda: 'return id(p4_warning);' }
+          then:
+            - lvgl.widget.update: { id: lbl_p4_title,  text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p4_cycles, text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p4_soh,    text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_p4_d,      text_color: 0xFFA726 }
+            - lvgl.widget.update: { id: lbl_pack4,     text_color: 0xFFA726 }
+          else:
+            - lvgl.widget.update: { id: lbl_p4_title,  text_color: 0xB0BEC5 }
+            - lvgl.widget.update: { id: lbl_p4_cycles, text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p4_soh,    text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_p4_d,      text_color: 0xFFFFFF }
+            - lvgl.widget.update: { id: lbl_pack4,     text_color: 0xFFFFFF }
+      # Cells page (segun selected_pack)
+      - lvgl.label.update:
+          id: lbl_cells_v
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *vmin=nullptr, *vmax=nullptr, *vavg=nullptr, *vdelta=nullptr;
+            switch (p) {
+              case 1: vmin=id(pack01_cell_v_min); vmax=id(pack01_cell_v_max); vavg=id(pack01_cell_v_avg); vdelta=id(pack01_cell_v_delta); break;
+              case 2: vmin=id(pack02_cell_v_min); vmax=id(pack02_cell_v_max); vavg=id(pack02_cell_v_avg); vdelta=id(pack02_cell_v_delta); break;
+              case 3: vmin=id(pack03_cell_v_min); vmax=id(pack03_cell_v_max); vavg=id(pack03_cell_v_avg); vdelta=id(pack03_cell_v_delta); break;
+              case 4: vmin=id(pack04_cell_v_min); vmax=id(pack04_cell_v_max); vavg=id(pack04_cell_v_avg); vdelta=id(pack04_cell_v_delta); break;
+              default: return std::string("Vmin --");
+            }
+            if (!vmin->has_state()) return std::string("Vmin --");
+            return str_sprintf("Vmin %.3f  Vmax %.3f  Vavg %.3f  d %.0f mV",
+              vmin->state/1000.0f, vmax->state/1000.0f, vavg->state/1000.0f, vdelta->state);
+      - lvgl.label.update:
+          id: lbl_cells_t
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *t1=nullptr,*t2=nullptr,*t3=nullptr,*t4=nullptr;
+            switch (p) {
+              case 1: t1=id(pack01_cell_temp_1); t2=id(pack01_cell_temp_2); t3=id(pack01_cell_temp_3); t4=id(pack01_cell_temp_4); break;
+              case 2: t1=id(pack02_cell_temp_1); t2=id(pack02_cell_temp_2); t3=id(pack02_cell_temp_3); t4=id(pack02_cell_temp_4); break;
+              case 3: t1=id(pack03_cell_temp_1); t2=id(pack03_cell_temp_2); t3=id(pack03_cell_temp_3); t4=id(pack03_cell_temp_4); break;
+              case 4: t1=id(pack04_cell_temp_1); t2=id(pack04_cell_temp_2); t3=id(pack04_cell_temp_3); t4=id(pack04_cell_temp_4); break;
+              default: return std::string("T1 --");
+            }
+            if (!t1->has_state()) return std::string("T1 --");
+            return str_sprintf("T1 %.0f  T2 %.0f  T3 %.0f  T4 %.0f", t1->state, t2->state, t3->state, t4->state);
+      - lvgl.label.update:
+          id: lbl_cells_env
+          text: !lambda |-
+            int p = id(selected_pack);
+            esphome::sensor::Sensor *env=nullptr,*pcb=nullptr;
+            switch (p) {
+              case 1: env=id(pack01_env_temp); pcb=id(pack01_pcb_temp); break;
+              case 2: env=id(pack02_env_temp); pcb=id(pack02_pcb_temp); break;
+              case 3: env=id(pack03_env_temp); pcb=id(pack03_pcb_temp); break;
+              case 4: env=id(pack04_env_temp); pcb=id(pack04_pcb_temp); break;
+              default: return std::string("PCB --   ENV --");
+            }
+            if (!env->has_state()) return std::string("PCB --   ENV --");
+            return str_sprintf("PCB %.0f C   ENV %.0f C", pcb->state, env->state);
+      - lvgl.label.update:
+          id: lbl_cells_serial
+          text: !lambda |-
+            int p = id(selected_pack);
+            std::string *sn = nullptr;
+            switch (p) {
+              case 1: sn = &id(pack01_serial_str); break;
+              case 2: sn = &id(pack02_serial_str); break;
+              case 3: sn = &id(pack03_serial_str); break;
+              case 4: sn = &id(pack04_serial_str); break;
+              default: return std::string("SN: --");
+            }
+            return (sn && !sn->empty()) ? std::string("SN: ") + *sn : std::string("SN: --");
