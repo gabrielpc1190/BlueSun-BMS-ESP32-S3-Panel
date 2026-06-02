@@ -25,3 +25,6 @@ Thumbs.db
 # Local scratch
 _scratch/
 *.log.local
+
+# Visual brainstorming companion
+.superpowers/

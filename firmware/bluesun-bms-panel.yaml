@@ -157,6 +157,11 @@ font:
     id: font_sm
     size: 20
     bpp: 1
+  - file: "gfonts://Montserrat@700"
+    id: font_xs
+    size: 14
+    bpp: 1
+    glyphs: "0123456789+-. AW%"
 
 # === Reloj HA ===
 time:
@@ -215,6 +220,15 @@ lvgl:
             text_color: 0x43A047
             align: TOP_MID
             y: 60
+        - label:
+            # Linea derivada del banco: potencia + autonomia + energia disponible.
+            # Se actualiza desde el on_value de mock_bank_p (cada 5s).
+            id: lbl_bank_info
+            text: ""
+            text_font: font_sm
+            text_color: 0xB0BEC5
+            align: TOP_MID
+            y: 165
         - bar:
             id: bar_soc
             min_value: 0
@@ -244,6 +258,7 @@ lvgl:
             max_value: 100
             value: 0
             indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pwr1, text: "", text_font: font_xs, text_color: 0x6E7B82, x: 30,  y: 370 }
         - label: { id: lbl_pack2, text: "P2 --%", text_font: font_sm, x: 140, y: 320 }
         - bar:
             id: bar_pack2
@@ -255,6 +270,7 @@ lvgl:
             max_value: 100
             value: 0
             indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pwr2, text: "", text_font: font_xs, text_color: 0x6E7B82, x: 140, y: 370 }
         - label: { id: lbl_pack3, text: "P3 --%", text_font: font_sm, text_color: 0xFFA726, x: 250, y: 320 }
         - bar:
             id: bar_pack3
@@ -268,6 +284,7 @@ lvgl:
             border_color: 0xFFA726
             border_width: 2
             indicator: { bg_color: 0xFFA726 }
+        - label: { id: lbl_pwr3, text: "", text_font: font_xs, text_color: 0x6E7B82, x: 250, y: 370 }
         - label: { id: lbl_pack4, text: "P4 --%", text_font: font_sm, x: 360, y: 320 }
         - bar:
             id: bar_pack4
@@ -279,6 +296,7 @@ lvgl:
             max_value: 100
             value: 0
             indicator: { bg_color: 0x43A047 }
+        - label: { id: lbl_pwr4, text: "", text_font: font_xs, text_color: 0x6E7B82, x: 360, y: 370 }
         - label:
             id: lbl_statusbar
             text: "Banco *.."
@@ -322,7 +340,8 @@ lvgl:
               - label: { id: lbl_p1_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
               - label: { id: lbl_p1_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
               - label: { id: lbl_p1_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
-              - label: { id: lbl_p1_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p1_w,   text: "-- W",    text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p1_soh, text: "SoH --%", text_font: font_sm, x: 110, y: 150 }
         - obj:
             id: card_pack2
             x: 245
@@ -344,7 +363,8 @@ lvgl:
               - label: { id: lbl_p2_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
               - label: { id: lbl_p2_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
               - label: { id: lbl_p2_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
-              - label: { id: lbl_p2_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p2_w,   text: "-- W",    text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p2_soh, text: "SoH --%", text_font: font_sm, x: 110, y: 150 }
         - obj:
             id: card_pack3
             x: 20
@@ -366,7 +386,8 @@ lvgl:
               - label: { id: lbl_p3_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
               - label: { id: lbl_p3_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
               - label: { id: lbl_p3_d,   text: "d -- mV", text_font: font_sm, text_color: 0xFFA726, x: 110, y: 125 }
-              - label: { id: lbl_p3_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p3_w,   text: "-- W",    text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p3_soh, text: "SoH --%", text_font: font_sm, x: 110, y: 150 }
         - obj:
             id: card_pack4
             x: 245
@@ -388,7 +409,8 @@ lvgl:
               - label: { id: lbl_p4_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
               - label: { id: lbl_p4_t,   text: "T -- C",  text_font: font_sm, x: 110, y: 100 }
               - label: { id: lbl_p4_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
-              - label: { id: lbl_p4_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p4_w,   text: "-- W",    text_font: font_sm, x: 10,  y: 150 }
+              - label: { id: lbl_p4_soh, text: "SoH --%", text_font: font_sm, x: 110, y: 150 }
         - label:
             text: "Banco .*."
             text_font: font_sm
@@ -560,6 +582,41 @@ sensor:
                                id(mock_bank_v).state,
                                id(mock_bank_i).state,
                                id(mock_bank_p).state);
+      # Badge de estado del banco (arriba-izq). signo: + = carga
+      - lvgl.label.update:
+          id: lbl_mode_badge
+          text: !lambda |-
+            float i = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            if (isnan(i))        return std::string("");
+            if (i >= 0.5f)       return std::string("CARGANDO");
+            if (i <= -0.5f)      return std::string("DESCARGANDO");
+            return std::string("REPOSO");
+          text_color: !lambda |-
+            float i = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
+      # Linea derivada: kW | tiempo a lleno/vacio | kWh disponibles
+      - lvgl.label.update:
+          id: lbl_bank_info
+          text: !lambda |-
+            float i   = id(bank_current_total).has_state() ? id(bank_current_total).state : NAN;
+            float p   = id(bank_power).has_state()          ? id(bank_power).state          : NAN;
+            float v   = id(bank_voltage_avg).has_state()    ? id(bank_voltage_avg).state    : NAN;
+            float rem = id(bank_remaining_ah).has_state()   ? id(bank_remaining_ah).state   : NAN;
+            float nom = id(bank_nominal_ah).has_state()     ? id(bank_nominal_ah).state     : NAN;
+            std::string s = isnan(p) ? std::string("-- kW") : str_sprintf("%.1f kW", fabsf(p) / 1000.0f);
+            // Autonomia: solo si hay corriente significativa y el calculo es razonable (0..100 h)
+            if (!isnan(i) && i >= 0.5f && !isnan(nom) && !isnan(rem)) {
+              float h = (nom - rem) / i;
+              if (h > 0.0f && h < 100.0f) s += str_sprintf("   %.1f h a lleno", h);
+            } else if (!isnan(i) && i <= -0.5f && !isnan(rem)) {
+              float h = rem / (-i);
+              if (h > 0.0f && h < 100.0f) s += str_sprintf("   %.1f h a vacio", h);
+            }
+            // Energia disponible (Ah * V)
+            if (!isnan(rem) && !isnan(v)) s += str_sprintf("   %.0f kWh", rem * v / 1000.0f);
+            return s;
 
   # Pack SoC mocks: actualizan home_page mini-bars + packs_page cards
   - platform: template
@@ -768,28 +825,124 @@ sensor:
 
   # === BMS sensors per-pack: cmd 0x10 (7 × 4 = 28) ===
   - {platform: template, id: pack01_voltage,      name: "BlueSun Pack01 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
-  - {platform: template, id: pack01_current,      name: "BlueSun Pack01 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  # SIGNO CENTRALIZADO (un solo punto facil de invertir, ver lbl_pwrX abajo):
+  #   corriente + = CARGA (verde 0x43A047), - = DESCARGA (naranja 0xFF7043), |I|<0.5 = REPOSO (gris 0x6E7B82)
+  #   El criterio vive en el on_value de cada pack0X_current. Para invertir el signo del
+  #   inversor, basta cambiar la comparacion `i >= DEADBAND` / `i <= -DEADBAND` (mismo patron x4).
+  - platform: template
+    id: pack01_current
+    name: "BlueSun Pack01 Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pwr1
+          # signo: + = carga, - = descarga
+          text: !lambda |-
+            float i = x;
+            std::string cur = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack01_power).has_state() && !isnan(id(pack01_power).state)) {
+              float w = id(pack01_power).state;
+              return cur + str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            }
+            return cur + " --";
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
   - {platform: template, id: pack01_soc,          name: "BlueSun Pack01 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
   - {platform: template, id: pack01_soh,          name: "BlueSun Pack01 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
   - {platform: template, id: pack01_cycles,       name: "BlueSun Pack01 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
   - {platform: template, id: pack01_remaining_ah, name: "BlueSun Pack01 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
   - {platform: template, id: pack01_nominal_ah,   name: "BlueSun Pack01 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
   - {platform: template, id: pack02_voltage,      name: "BlueSun Pack02 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
-  - {platform: template, id: pack02_current,      name: "BlueSun Pack02 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - platform: template
+    id: pack02_current
+    name: "BlueSun Pack02 Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pwr2
+          # signo: + = carga, - = descarga
+          text: !lambda |-
+            float i = x;
+            std::string cur = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack02_power).has_state() && !isnan(id(pack02_power).state)) {
+              float w = id(pack02_power).state;
+              return cur + str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            }
+            return cur + " --";
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
   - {platform: template, id: pack02_soc,          name: "BlueSun Pack02 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
   - {platform: template, id: pack02_soh,          name: "BlueSun Pack02 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
   - {platform: template, id: pack02_cycles,       name: "BlueSun Pack02 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
   - {platform: template, id: pack02_remaining_ah, name: "BlueSun Pack02 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
   - {platform: template, id: pack02_nominal_ah,   name: "BlueSun Pack02 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
   - {platform: template, id: pack03_voltage,      name: "BlueSun Pack03 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
-  - {platform: template, id: pack03_current,      name: "BlueSun Pack03 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - platform: template
+    id: pack03_current
+    name: "BlueSun Pack03 Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pwr3
+          # signo: + = carga, - = descarga
+          text: !lambda |-
+            float i = x;
+            std::string cur = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack03_power).has_state() && !isnan(id(pack03_power).state)) {
+              float w = id(pack03_power).state;
+              return cur + str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            }
+            return cur + " --";
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
   - {platform: template, id: pack03_soc,          name: "BlueSun Pack03 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
   - {platform: template, id: pack03_soh,          name: "BlueSun Pack03 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
   - {platform: template, id: pack03_cycles,       name: "BlueSun Pack03 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
   - {platform: template, id: pack03_remaining_ah, name: "BlueSun Pack03 Remaining Ah", unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-outline"}
   - {platform: template, id: pack03_nominal_ah,   name: "BlueSun Pack03 Nominal Ah",   unit_of_measurement: "Ah", accuracy_decimals: 2, state_class: measurement, icon: "mdi:battery-high"}
   - {platform: template, id: pack04_voltage,      name: "BlueSun Pack04 Voltage",      unit_of_measurement: "V",  accuracy_decimals: 2, device_class: voltage, state_class: measurement}
-  - {platform: template, id: pack04_current,      name: "BlueSun Pack04 Current",      unit_of_measurement: "A",  accuracy_decimals: 2, device_class: current, state_class: measurement}
+  - platform: template
+    id: pack04_current
+    name: "BlueSun Pack04 Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    on_value:
+      - lvgl.label.update:
+          id: lbl_pwr4
+          # signo: + = carga, - = descarga
+          text: !lambda |-
+            float i = x;
+            std::string cur = str_sprintf("%s%.0fA", (i >= 0 ? "+" : ""), i);
+            if (id(pack04_power).has_state() && !isnan(id(pack04_power).state)) {
+              float w = id(pack04_power).state;
+              return cur + str_sprintf(" %s%.0fW", (w >= 0 ? "+" : ""), w);
+            }
+            return cur + " --";
+          text_color: !lambda |-
+            float i = x;            // signo: + = carga
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);   // carga
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);   // descarga
+            else                 return lv_color_hex(0x6E7B82);   // reposo
   - {platform: template, id: pack04_soc,          name: "BlueSun Pack04 SoC",          unit_of_measurement: "%",  accuracy_decimals: 1, device_class: battery, state_class: measurement}
   - {platform: template, id: pack04_soh,          name: "BlueSun Pack04 SoH",          unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:battery-heart-variant"}
   - {platform: template, id: pack04_cycles,       name: "BlueSun Pack04 Cycles",       accuracy_decimals: 0, state_class: total_increasing, icon: "mdi:counter"}
@@ -847,6 +1000,15 @@ sensor:
       lambda: 'float sum=0; int n=0; for (auto *s : {id(pack01_soc),id(pack02_soc),id(pack03_soc),id(pack04_soc)}) if (s->has_state() && !isnan(s->state)) { sum+=s->state; n++; } return n>0?sum/n:NAN;' }
   - { platform: template, name: "BlueSun Bank Power",        id: bank_power,        unit_of_measurement: "W",  device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
       lambda: 'float v=id(bank_voltage_avg).state; float i=id(bank_current_total).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
+  # Per-pack power (V*I) — mismo patron que bank_power; expone potencia por pack a HA tambien
+  - { platform: template, name: "BlueSun Pack01 Power", id: pack01_power, unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
+      lambda: 'float v=id(pack01_voltage).state; float i=id(pack01_current).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
+  - { platform: template, name: "BlueSun Pack02 Power", id: pack02_power, unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
+      lambda: 'float v=id(pack02_voltage).state; float i=id(pack02_current).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
+  - { platform: template, name: "BlueSun Pack03 Power", id: pack03_power, unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
+      lambda: 'float v=id(pack03_voltage).state; float i=id(pack03_current).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
+  - { platform: template, name: "BlueSun Pack04 Power", id: pack04_power, unit_of_measurement: "W", device_class: power, state_class: measurement, accuracy_decimals: 0, update_interval: 15s,
+      lambda: 'float v=id(pack04_voltage).state; float i=id(pack04_current).state; if (isnan(v)||isnan(i)) return NAN; return v*i;' }
   - { platform: template, name: "BlueSun Bank SoC Spread",   id: bank_soc_spread,   unit_of_measurement: "%",  accuracy_decimals: 1, state_class: measurement, icon: "mdi:arrow-expand-horizontal", update_interval: 15s,
       lambda: 'float mn=999.0f,mx=-999.0f; for (auto *s : {id(pack01_soc),id(pack02_soc),id(pack03_soc),id(pack04_soc)}) if (s->has_state() && !isnan(s->state)) { if (s->state<mn) mn=s->state; if (s->state>mx) mx=s->state; } return (mx>=-999.0f && mn<=999.0f) ? (mx-mn) : NAN;' }
   - { platform: template, name: "BlueSun Bank Remaining Ah", id: bank_remaining_ah, unit_of_measurement: "Ah", state_class: measurement, accuracy_decimals: 2, update_interval: 15s, icon: "mdi:battery-outline",
@@ -952,22 +1114,94 @@ interval:
   - interval: 5s
     then:
       - lvgl.label.update: { id: lbl_p1_v, text: !lambda 'return id(pack01_voltage).has_state() ? str_sprintf("%.1f V", id(pack01_voltage).state) : std::string("-- V");' }
-      - lvgl.label.update: { id: lbl_p1_i, text: !lambda 'return id(pack01_current).has_state() ? str_sprintf("%.1f A", id(pack01_current).state) : std::string("-- A");' }
+      - lvgl.label.update:
+          id: lbl_p1_i
+          text: !lambda 'return id(pack01_current).has_state() ? str_sprintf("%.1f A", id(pack01_current).state) : std::string("-- A");'
+          # signo: + = carga (verde) / - = descarga (naranja) / reposo (gris)
+          text_color: !lambda |-
+            if (!id(pack01_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack01_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
+      - lvgl.label.update:
+          id: lbl_p1_w
+          text: !lambda 'return id(pack01_power).has_state() ? str_sprintf("%.0f W", id(pack01_power).state) : std::string("-- W");'
+          text_color: !lambda |-
+            if (!id(pack01_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack01_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
       - lvgl.label.update: { id: lbl_p1_t, text: !lambda 'return id(pack01_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack01_cell_temp_1).state) : std::string("T -- C");' }
       - lvgl.label.update: { id: lbl_p1_d, text: !lambda 'return id(pack01_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack01_cell_v_delta).state) : std::string("d -- mV");' }
       - lvgl.label.update: { id: lbl_p1_soh, text: !lambda 'return id(pack01_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack01_soh).state) : std::string("SoH --%");' }
       - lvgl.label.update: { id: lbl_p2_v, text: !lambda 'return id(pack02_voltage).has_state() ? str_sprintf("%.1f V", id(pack02_voltage).state) : std::string("-- V");' }
-      - lvgl.label.update: { id: lbl_p2_i, text: !lambda 'return id(pack02_current).has_state() ? str_sprintf("%.1f A", id(pack02_current).state) : std::string("-- A");' }
+      - lvgl.label.update:
+          id: lbl_p2_i
+          text: !lambda 'return id(pack02_current).has_state() ? str_sprintf("%.1f A", id(pack02_current).state) : std::string("-- A");'
+          # signo: + = carga (verde) / - = descarga (naranja) / reposo (gris)
+          text_color: !lambda |-
+            if (!id(pack02_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack02_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
+      - lvgl.label.update:
+          id: lbl_p2_w
+          text: !lambda 'return id(pack02_power).has_state() ? str_sprintf("%.0f W", id(pack02_power).state) : std::string("-- W");'
+          text_color: !lambda |-
+            if (!id(pack02_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack02_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
       - lvgl.label.update: { id: lbl_p2_t, text: !lambda 'return id(pack02_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack02_cell_temp_1).state) : std::string("T -- C");' }
       - lvgl.label.update: { id: lbl_p2_d, text: !lambda 'return id(pack02_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack02_cell_v_delta).state) : std::string("d -- mV");' }
       - lvgl.label.update: { id: lbl_p2_soh, text: !lambda 'return id(pack02_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack02_soh).state) : std::string("SoH --%");' }
       - lvgl.label.update: { id: lbl_p3_v, text: !lambda 'return id(pack03_voltage).has_state() ? str_sprintf("%.1f V", id(pack03_voltage).state) : std::string("-- V");' }
-      - lvgl.label.update: { id: lbl_p3_i, text: !lambda 'return id(pack03_current).has_state() ? str_sprintf("%.1f A", id(pack03_current).state) : std::string("-- A");' }
+      - lvgl.label.update:
+          id: lbl_p3_i
+          text: !lambda 'return id(pack03_current).has_state() ? str_sprintf("%.1f A", id(pack03_current).state) : std::string("-- A");'
+          # signo: + = carga (verde) / - = descarga (naranja) / reposo (gris)
+          text_color: !lambda |-
+            if (!id(pack03_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack03_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
+      - lvgl.label.update:
+          id: lbl_p3_w
+          text: !lambda 'return id(pack03_power).has_state() ? str_sprintf("%.0f W", id(pack03_power).state) : std::string("-- W");'
+          text_color: !lambda |-
+            if (!id(pack03_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack03_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
       - lvgl.label.update: { id: lbl_p3_t, text: !lambda 'return id(pack03_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack03_cell_temp_1).state) : std::string("T -- C");' }
       - lvgl.label.update: { id: lbl_p3_d, text: !lambda 'return id(pack03_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack03_cell_v_delta).state) : std::string("d -- mV");' }
       - lvgl.label.update: { id: lbl_p3_soh, text: !lambda 'return id(pack03_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack03_soh).state) : std::string("SoH --%");' }
       - lvgl.label.update: { id: lbl_p4_v, text: !lambda 'return id(pack04_voltage).has_state() ? str_sprintf("%.1f V", id(pack04_voltage).state) : std::string("-- V");' }
-      - lvgl.label.update: { id: lbl_p4_i, text: !lambda 'return id(pack04_current).has_state() ? str_sprintf("%.1f A", id(pack04_current).state) : std::string("-- A");' }
+      - lvgl.label.update:
+          id: lbl_p4_i
+          text: !lambda 'return id(pack04_current).has_state() ? str_sprintf("%.1f A", id(pack04_current).state) : std::string("-- A");'
+          # signo: + = carga (verde) / - = descarga (naranja) / reposo (gris)
+          text_color: !lambda |-
+            if (!id(pack04_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack04_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
+      - lvgl.label.update:
+          id: lbl_p4_w
+          text: !lambda 'return id(pack04_power).has_state() ? str_sprintf("%.0f W", id(pack04_power).state) : std::string("-- W");'
+          text_color: !lambda |-
+            if (!id(pack04_current).has_state()) return lv_color_hex(0xFFFFFF);
+            float i = id(pack04_current).state;
+            if (i >= 0.5f)       return lv_color_hex(0x43A047);
+            else if (i <= -0.5f) return lv_color_hex(0xFF7043);
+            else                 return lv_color_hex(0x6E7B82);
       - lvgl.label.update: { id: lbl_p4_t, text: !lambda 'return id(pack04_cell_temp_1).has_state() ? str_sprintf("T %.0f C", id(pack04_cell_temp_1).state) : std::string("T -- C");' }
       - lvgl.label.update: { id: lbl_p4_d, text: !lambda 'return id(pack04_cell_v_delta).has_state() ? str_sprintf("d %.0f mV", id(pack04_cell_v_delta).state) : std::string("d -- mV");' }
       - lvgl.label.update: { id: lbl_p4_soh, text: !lambda 'return id(pack04_soh).has_state() ? str_sprintf("SoH %.0f%%", id(pack04_soh).state) : std::string("SoH --%");' }
