@@ -354,7 +354,7 @@ lvgl:
               - lvgl.page.show: cells_page
             widgets:
               - label: { id: lbl_p1_title, text: "Pack 1", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
-              - label: { id: lbl_p1_w, text: "-- W", text_font: font_xs, align: TOP_RIGHT, x: -10, y: 8 }
+              - label: { id: lbl_p1_w, text: "-- W", text_font: font_sm, align: TOP_RIGHT, x: -10, y: 8 }
               - label: { id: lbl_p1_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
               - label: { id: lbl_p1_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
               - label: { id: lbl_p1_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
@@ -378,7 +378,7 @@ lvgl:
               - lvgl.page.show: cells_page
             widgets:
               - label: { id: lbl_p2_title, text: "Pack 2", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
-              - label: { id: lbl_p2_w, text: "-- W", text_font: font_xs, align: TOP_RIGHT, x: -10, y: 8 }
+              - label: { id: lbl_p2_w, text: "-- W", text_font: font_sm, align: TOP_RIGHT, x: -10, y: 8 }
               - label: { id: lbl_p2_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
               - label: { id: lbl_p2_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
               - label: { id: lbl_p2_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
@@ -402,7 +402,7 @@ lvgl:
               - lvgl.page.show: cells_page
             widgets:
               - label: { id: lbl_p3_title, text: "Pack 3", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
-              - label: { id: lbl_p3_w, text: "-- W", text_font: font_xs, align: TOP_RIGHT, x: -10, y: 8 }
+              - label: { id: lbl_p3_w, text: "-- W", text_font: font_sm, align: TOP_RIGHT, x: -10, y: 8 }
               - label: { id: lbl_p3_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
               - label: { id: lbl_p3_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
               - label: { id: lbl_p3_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
@@ -426,7 +426,7 @@ lvgl:
               - lvgl.page.show: cells_page
             widgets:
               - label: { id: lbl_p4_title, text: "Pack 4", text_font: font_sm, text_color: 0xB0BEC5, x: 10, y: 5 }
-              - label: { id: lbl_p4_w, text: "-- W", text_font: font_xs, align: TOP_RIGHT, x: -10, y: 8 }
+              - label: { id: lbl_p4_w, text: "-- W", text_font: font_sm, align: TOP_RIGHT, x: -10, y: 8 }
               - label: { id: lbl_p4_soc, text: "--%", text_font: font_lg, x: 10, y: 35 }
               - label: { id: lbl_p4_v,   text: "-- V",  text_font: font_sm, x: 10,  y: 100 }
               - label: { id: lbl_p4_i,   text: "-- A",  text_font: font_sm, x: 10,  y: 125 }
