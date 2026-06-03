@@ -316,13 +316,6 @@ lvgl:
         - label: { id: lbl_pwr2, text: "", text_font: font_xs, x: 140, y: 370 }
         - label: { id: lbl_pwr3, text: "", text_font: font_xs, x: 250, y: 370 }
         - label: { id: lbl_pwr4, text: "", text_font: font_xs, x: 360, y: 370 }
-        - label:
-            id: lbl_statusbar
-            text: "Banco *.."
-            text_font: font_sm
-            text_color: 0x6E7B82
-            align: BOTTOM_MID
-            y: -10
 
     # === Vista 2 — Packs (grid 2x2) ===
     - id: packs_page
@@ -434,12 +427,6 @@ lvgl:
               - label: { id: lbl_p4_d,   text: "d -- mV", text_font: font_sm, x: 110, y: 125 }
               - label: { id: lbl_p4_soh, text: "SoH --%", text_font: font_sm, x: 10,  y: 150 }
               - label: { id: lbl_p4_cycles, text: "C --", text_font: font_sm, x: 110, y: 150 }
-        - label:
-            text: "Banco .*."
-            text_font: font_sm
-            text_color: 0x6E7B82
-            align: BOTTOM_MID
-            y: -10
 
     # === Vista 3 — Celdas (drill-down) ===
     - id: cells_page
@@ -489,12 +476,6 @@ lvgl:
             text_color: 0x666666
             align: BOTTOM_MID
             y: -40
-        - label:
-            text: "Banco ..*"
-            text_font: font_sm
-            text_color: 0x6E7B82
-            align: BOTTOM_MID
-            y: -10
 
 # === Globals ===
 globals:
