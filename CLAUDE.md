@@ -6,6 +6,8 @@ production: false
 status: active
 stack: [esphome, esp32]
 repo: "git@github.com:gabrielpc1190/BlueSun-BMS-ESP32-S3-Panel.git"
+tags: [gadi, energia, firmware]
+related: [inverter-bridge, HomeAssistant]
 ---
 
 # CLAUDE.md — bluesun-bms-esp32s3-panel
