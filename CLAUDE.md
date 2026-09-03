@@ -1,7 +1,7 @@
 ---
 type: project
 title: bluesun-bms-esp32s3-panel
-description: "Firmware ESPHome (ESP32-S3) para panel táctil de monitoreo del banco de baterías BlueSun (protocolo Octopus BMS), integrado a Home Assistant."
+description: "Panel táctil ESPHome para el BMS BlueSun, integrado a HA."
 production: false
 status: active
 stack: [esphome, esp32]
